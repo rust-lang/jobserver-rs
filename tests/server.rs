@@ -85,7 +85,7 @@ bar:
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     let a = "\
 echo foo
 foo

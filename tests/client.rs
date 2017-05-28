@@ -53,14 +53,6 @@ const TESTS: &[Test] = &[
         },
     },
     Test {
-        name: "j args with no plus",
-        make_args: &["-j2"],
-        rule: &|me| format!("{}", me),
-        f: &|| {
-            assert!(unsafe { Client::from_env().is_none() });
-        },
-    },
-    Test {
         name: "j args with plus",
         make_args: &["-j2"],
         rule: &|me| format!("+{}", me),

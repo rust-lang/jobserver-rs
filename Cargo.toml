@@ -3,8 +3,12 @@ name = "jobserver"
 version = "0.1.0"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 
-[dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "0.2"
+kernel32-sys = "0.2"
 
 [dev-dependencies]
 futures = "0.1"

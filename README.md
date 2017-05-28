@@ -4,7 +4,7 @@ An implementation of the GNU make jobserver for Rust
 
 [![Build Status](https://travis-ci.org/alexcrichton/jobserver-rs.svg?branch=master)](https://travis-ci.org/alexcrichton/jobserver-rs)
 [![Build status](https://ci.appveyor.com/api/projects/status/h5jc30hohp7ejd9c/branch/master?svg=true)](https://ci.appveyor.com/project/alexcrichton/jobserver-rs/branch/master)
-[![Crates.io](https://img.shields.io/crates/v/jobserver-rs.svg?maxAge=2592000)](https://crates.io/crates/jobserver-rs)
+[![Crates.io](https://img.shields.io/crates/v/jobserver.svg?maxAge=2592000)](https://crates.io/crates/jobserver)
 
 [Documentation](https://docs.rs/jobserver)
 

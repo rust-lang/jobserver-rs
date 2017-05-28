@@ -14,7 +14,7 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-jobserver = "0.1.1"
+jobserver = "0.1"
 ```
 
 Next, add this to your crate:

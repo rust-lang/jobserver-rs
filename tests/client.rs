@@ -131,7 +131,8 @@ all:
 ", test.name, (test.rule)(me));
         t!(t!(File::create(td.path().join("Makefile")))
            .write_all(makefile.as_bytes()));
-        let mut cmd = Command::new("make");
+        let prog = env::var("MAKE").unwrap_or("make".to_string());
+        let mut cmd = Command::new(prog);
         cmd.args(test.make_args);
         cmd.current_dir(td.path());
         future::lazy(move || {

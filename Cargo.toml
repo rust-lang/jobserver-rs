@@ -9,6 +9,7 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 winapi = "0.2"
 kernel32-sys = "0.2"
+rand = "0.3"
 
 [dev-dependencies]
 futures = "0.1"
@@ -21,3 +22,17 @@ tokio-process = "0.1"
 name = "client"
 harness = false
 path = "tests/client.rs"
+
+[[test]]
+name = "server"
+path = "tests/server.rs"
+
+[[test]]
+name = "client-of-myself"
+path = "tests/client-of-myself.rs"
+harness = false
+
+[[test]]
+name = "make-as-a-client"
+path = "tests/make-as-a-client.rs"
+harness = false

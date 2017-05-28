@@ -66,8 +66,8 @@ const TESTS: &[Test] = &[
         rule: &|me| format!("+{}", me),
         f: &|| {
             let c = unsafe { Client::from_env().unwrap() };
-            drop(c.acquire());
-            drop(c.acquire());
+            drop(c.acquire().unwrap());
+            drop(c.acquire().unwrap());
         },
     },
     Test {
@@ -76,8 +76,8 @@ const TESTS: &[Test] = &[
         rule: &|me| format!("+{}", me),
         f: &|| {
             let c = unsafe { Client::from_env().unwrap() };
-            let a = c.acquire();
-            let b = c.acquire();
+            let a = c.acquire().unwrap();
+            let b = c.acquire().unwrap();
             drop((a, b));
         },
     },
@@ -87,13 +87,13 @@ const TESTS: &[Test] = &[
         rule: &|me| format!("+{}", me),
         f: &|| {
             let c = unsafe { Client::from_env().unwrap() };
-            let a = c.acquire();
+            let a = c.acquire().unwrap();
             let hit = Arc::new(AtomicBool::new(false));
             let hit2 = hit.clone();
             let (tx, rx) = mpsc::channel();
             let t = thread::spawn(move || {
                 tx.send(()).unwrap();
-                let _b = c.acquire();
+                let _b = c.acquire().unwrap();
                 hit2.store(true, Ordering::SeqCst);
             });
             rx.recv().unwrap();
@@ -151,9 +151,9 @@ all:
     let mut failures = Vec::new();
     t!(core.run(stream.for_each(|(test, output)| {
         if output.status.success() {
-            println!("{} ... ok", test.name);
+            println!("test {} ... ok", test.name);
         } else {
-            println!("{} ... FAIL", test.name);
+            println!("test {} ... FAIL", test.name);
             failures.push((test, output));
         }
         Ok(())

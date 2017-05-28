@@ -145,6 +145,8 @@ mod imp {
 
     pub struct Acquired;
 
+    const SEMAPHORE_MODIFY_STATE: winapi::DWORD = 0x2;
+
     impl Client {
         pub unsafe fn open(s: &str) -> Option<Client> {
             let name = match CString::new(s) {
@@ -152,7 +154,8 @@ mod imp {
                 Err(_) => return None,
             };
 
-            let sem = kernel32::OpenSemaphoreA(winapi::SYNCHRONIZE,
+            let sem = kernel32::OpenSemaphoreA(winapi::SYNCHRONIZE |
+                                                SEMAPHORE_MODIFY_STATE,
                                                winapi::FALSE,
                                                name.as_ptr());
             if sem.is_null() {

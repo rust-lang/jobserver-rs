@@ -52,7 +52,6 @@ impl Drop for Acquired {
 }
 
 #[cfg(unix)]
-#[path = "unix.rs"]
 mod imp {
     extern crate libc;
 

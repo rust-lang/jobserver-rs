@@ -82,6 +82,7 @@ use std::env;
 use std::io;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::mpsc::{self, Sender};
 
 /// A client of a jobserver
 ///
@@ -258,11 +259,123 @@ impl Client {
         cmd.env("MFLAGS", &value);
         self.inner.configure(cmd);
     }
+
+    /// Converts this `Client` into a helper thread to deal with a blocking
+    /// `acquire` function a little more easily.
+    ///
+    /// The fact that the `acquire` function on `Client` blocks isn't always
+    /// the easiest to work with. Typically you're using a jobserver to
+    /// manage running other events in parallel! This means that you need to
+    /// either (a) wait for an existing job to finish or (b) wait for a
+    /// new token to become available.
+    ///
+    /// Unfortunately the blocking in `acquire` happens at the implementation
+    /// layer of jobservers. On Unix this requires a blocking call to `read`
+    /// and on Windows this requires one of the `WaitFor*` functions. Both
+    /// of these situations aren't the easiest to deal with:
+    ///
+    /// * On Unix there's basically only one way to wake up a `read` early, and
+    ///   that's through a signal. This is what the `make` implementation
+    ///   itself uses, relying on `SIGCHLD` to wake up a blocking acquisition
+    ///   of a new job token. Unfortunately nonblocking I/O is not an option
+    ///   here, so it means that "waiting for one of two events" means that
+    ///   the latter event must generate a signal! This is not always the case
+    ///   on unix for all jobservers.
+    ///
+    /// * On Windows you'd have to basically use the `WaitForMultipleObjects`
+    ///   which means that you've got to canonicalize all your event sources
+    ///   into a `HANDLE` which also isn't the easiest thing to do
+    ///   unfortunately.
+    ///
+    /// This function essentially attempts to ease these limitations by
+    /// converting this `Client` into a helper thread spawned into this
+    /// process. The application can then request that the helper thread
+    /// acquires tokens and the provided closure will be invoked for each token
+    /// acquired.
+    ///
+    /// The intention is that this function can be used to translate the event
+    /// of a token acquisition into an arbitrary user-defined event.
+    ///
+    /// # Arguments
+    ///
+    /// This function will consume the `Client` provided to be transferred to
+    /// the helper thread that is spawned. Additionally a closure `f` is
+    /// provided to be invoked whenever a token is acquired.
+    ///
+    /// This closure is only invoked after calls to
+    /// `HelperThread::request_token` have been made and a token itself has
+    /// been acquired. If an error happens while acquiring the token then
+    /// an error will be yielded to the closure as well.
+    ///
+    /// # Return Value
+    ///
+    /// This function will return an instance of the `HelperThread` structure
+    /// which is used to manage the helper thread associated with this client.
+    /// Through the `HelperThread` you'll request that tokens are acquired.
+    /// When acquired, the closure provided here is invoked.
+    ///
+    /// When the `HelperThread` structure is returned it will be gracefully
+    /// torn down, and the calling thread will be blocked until the thread is
+    /// torn down (which should be prompt).
+    ///
+    /// # Errors
+    ///
+    /// This function may fail due to creation of the helper thread or
+    /// auxiliary I/O objects to manage the helper thread. In any of these
+    /// situations the error is propagated upwards.
+    ///
+    /// # Platform-specific behavior
+    ///
+    /// On Windows this function behaves pretty normally as expected, but on
+    /// Unix the implementation is... a little heinous. As mentioned above
+    /// we're forced into blocking I/O for token acquisition, namely a blocking
+    /// call to `read`. We must be able to unblock this, however, to tear down
+    /// the helper thread gracefully!
+    ///
+    /// Essentially what happens is that we'll send a signal to the helper
+    /// thread spawned and rely on `EINTR` being returned to wake up the helper
+    /// thread. This involves installing a global `SIGUSR1` handler that does
+    /// nothing along with sending signals to that thread. This may cause
+    /// odd behavior in some applications, so it's recommended to review and
+    /// test thoroughly before using this.
+    pub fn into_helper_thread<F>(self, f: F) -> io::Result<HelperThread>
+        where F: FnMut(io::Result<Acquired>) + Send + 'static,
+    {
+        let (tx, rx) = mpsc::channel();
+        Ok(HelperThread {
+            inner: Some(imp::spawn_helper(self, rx, Box::new(f))?),
+            tx: Some(tx),
+        })
+    }
 }
 
 impl Drop for Acquired {
     fn drop(&mut self) {
         drop(self.client.release(&self.data));
+    }
+}
+
+/// Structure returned from `Client::into_helper_thread` to manage the lifetime
+/// of the helper thread returned, see those associated docs for more info.
+pub struct HelperThread {
+    inner: Option<imp::Helper>,
+    tx: Option<Sender<()>>,
+}
+
+impl HelperThread {
+    /// Request that the helper thread acquires a token, eventually calling the
+    /// original closure with a token when it's available.
+    ///
+    /// For more information, see the docs on that function.
+    pub fn request_token(&self) {
+        self.tx.as_ref().unwrap().send(()).unwrap();
+    }
+}
+
+impl Drop for HelperThread {
+    fn drop(&mut self) {
+        drop(self.tx.take());
+        self.inner.take().unwrap().join();
     }
 }
 
@@ -275,7 +388,12 @@ mod imp {
     use std::mem;
     use std::os::unix::prelude::*;
     use std::process::Command;
-    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+    use std::ptr;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+    use std::sync::mpsc::{self, Receiver};
+    use std::sync::{Arc, Once, ONCE_INIT};
+    use std::thread::{JoinHandle, Builder};
+    use std::time::Duration;
 
     use self::libc::c_int;
 
@@ -358,7 +476,7 @@ mod imp {
 
         pub fn acquire(&self) -> io::Result<Acquired> {
             let mut buf = [0];
-            (&self.read).read_exact(&mut buf)?;
+            (&self.read).read(&mut buf)?;
             Ok(Acquired { byte: buf[0] })
         }
 
@@ -383,6 +501,84 @@ mod imp {
                 set_cloexec(write, false)?;
                 Ok(())
             });
+        }
+    }
+
+    pub struct Helper {
+        thread: JoinHandle<()>,
+        quitting: Arc<AtomicBool>,
+        rx_done: Receiver<()>,
+    }
+
+    pub fn spawn_helper(client: ::Client,
+                        rx: Receiver<()>,
+                        mut f: Box<FnMut(io::Result<::Acquired>) + Send>)
+        -> io::Result<Helper>
+    {
+        static USR1_INIT: Once = ONCE_INIT;
+        let mut err = None;
+        USR1_INIT.call_once(|| unsafe {
+            let mut new: libc::sigaction = mem::zeroed();
+            new.sa_sigaction = sigusr1_handler as usize;
+            new.sa_flags = libc::SA_SIGINFO;
+            if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
+                err = Some(io::Error::last_os_error());
+            }
+        });
+
+        if let Some(e) = err.take() {
+            return Err(e)
+        }
+
+        let quitting = Arc::new(AtomicBool::new(false));
+        let quitting2 = quitting.clone();
+        let (tx_done, rx_done) = mpsc::channel();
+        let thread = Builder::new().spawn(move || {
+            'outer:
+            for () in rx {
+                loop {
+                    let res = client.acquire();
+                    if let Err(ref e) = res {
+                        if e.kind() == io::ErrorKind::Interrupted {
+                            if quitting2.load(Ordering::SeqCst) {
+                                break 'outer
+                            } else {
+                                continue
+                            }
+                        }
+                    }
+                    f(res);
+                    break
+                }
+            }
+            tx_done.send(()).unwrap();
+        })?;
+
+        Ok(Helper {
+            thread: thread,
+            quitting: quitting,
+            rx_done: rx_done,
+        })
+    }
+
+    impl Helper {
+        pub fn join(self) {
+            self.quitting.store(true, Ordering::SeqCst);
+            let dur = Duration::from_millis(10);
+            loop {
+                unsafe {
+                    let r = libc::pthread_kill(self.thread.as_pthread_t(),
+                                               libc::SIGUSR1);
+                    if r != 0 {
+                        panic!("error in pthread_kill: {}",
+                               io::Error::last_os_error());
+                    }
+                    if self.rx_done.recv_timeout(dur).is_ok() {
+                        break
+                    }
+                }
+            }
+            self.thread.join().unwrap();
         }
     }
 
@@ -437,6 +633,12 @@ mod imp {
             mem::transmute(&PIPE2)
         }
     }
+
+    extern fn sigusr1_handler(_signum: c_int,
+                              _info: *mut libc::siginfo_t,
+                              _ptr: *mut libc::c_void) {
+        // nothing to do
+    }
 }
 
 #[cfg(windows)]
@@ -449,15 +651,19 @@ mod imp {
     use std::io;
     use std::process::Command;
     use std::ptr;
+    use std::sync::Arc;
+    use std::sync::mpsc::Receiver;
+    use std::thread::{Builder, JoinHandle};
 
     pub struct Client {
-        sem: winapi::HANDLE,
+        sem: Handle,
         name: String,
     }
 
+    struct Handle(winapi::HANDLE);
     // HANDLE is a raw ptr, but we're send/sync
-    unsafe impl Sync for Client {}
-    unsafe impl Send for Client {}
+    unsafe impl Sync for Handle {}
+    unsafe impl Send for Handle {}
 
     pub struct Acquired;
 
@@ -478,6 +684,7 @@ mod imp {
                     if r.is_null() {
                         return Err(io::Error::last_os_error())
                     }
+                    let handle = Handle(r);
 
                     let err = io::Error::last_os_error();
                     if err.raw_os_error() == Some(winapi::ERROR_ALREADY_EXISTS as i32) {
@@ -485,7 +692,7 @@ mod imp {
                     }
                     name.pop(); // chop off the trailing nul
                     return Ok(Client {
-                        sem: r,
+                        sem: handle,
                         name: name,
                     })
                 }
@@ -509,7 +716,7 @@ mod imp {
                 None
             } else {
                 Some(Client {
-                    sem: sem,
+                    sem: Handle(sem),
                     name: s.to_string(),
                 })
             }
@@ -517,7 +724,7 @@ mod imp {
 
         pub fn acquire(&self) -> io::Result<Acquired> {
             unsafe {
-                let r = kernel32::WaitForSingleObject(self.sem,
+                let r = kernel32::WaitForSingleObject(self.sem.0,
                                                       winapi::INFINITE);
                 if r == winapi::WAIT_OBJECT_0 {
                     Ok(Acquired)
@@ -529,7 +736,7 @@ mod imp {
 
         pub fn release(&self, _data: &Acquired) -> io::Result<()> {
             unsafe {
-                let r = kernel32::ReleaseSemaphore(self.sem, 1, ptr::null_mut());
+                let r = kernel32::ReleaseSemaphore(self.sem.0, 1, ptr::null_mut());
                 if r != 0 {
                     Ok(())
                 } else {
@@ -548,11 +755,72 @@ mod imp {
         }
     }
 
-    impl Drop for Client {
+    impl Drop for Handle {
         fn drop(&mut self) {
             unsafe {
-                kernel32::CloseHandle(self.sem);
+                kernel32::CloseHandle(self.0);
             }
+        }
+    }
+
+    pub struct Helper {
+        event: Arc<Handle>,
+        thread: JoinHandle<()>,
+    }
+
+    pub fn spawn_helper(client: ::Client,
+                        rx: Receiver<()>,
+                        mut f: Box<FnMut(io::Result<::Acquired>) + Send>)
+        -> io::Result<Helper>
+    {
+        let event = unsafe {
+            let r = kernel32::CreateEventA(ptr::null_mut(),
+                                           winapi::TRUE,
+                                           winapi::FALSE,
+                                           ptr::null());
+            if r.is_null() {
+                return Err(io::Error::last_os_error())
+            } else {
+                Handle(r)
+            }
+        };
+        let event = Arc::new(event);
+        let event2 = event.clone();
+        let thread = Builder::new().spawn(move || {
+            let objects = [event2.0, client.inner.sem.0];
+            for () in rx {
+                let r = unsafe {
+                    kernel32::WaitForMultipleObjects(2,
+                                                     objects.as_ptr(),
+                                                     winapi::FALSE,
+                                                     winapi::INFINITE)
+                };
+                if r == winapi::WAIT_OBJECT_0 {
+                    break
+                }
+                if r == winapi::WAIT_OBJECT_0 + 1 {
+                    f(Ok(::Acquired {
+                        client: client.inner.clone(),
+                        data: Acquired,
+                    }))
+                } else {
+                    f(Err(io::Error::last_os_error()))
+                }
+            }
+        })?;
+        Ok(Helper {
+            thread: thread,
+            event: event,
+        })
+    }
+
+    impl Helper {
+        pub fn join(self) {
+            let r = unsafe { kernel32::SetEvent(self.event.0) };
+            if r == 0 {
+                panic!("failed to set event: {}", io::Error::last_os_error());
+            }
+            self.thread.join().unwrap();
         }
     }
 }

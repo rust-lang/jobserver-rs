@@ -565,18 +565,23 @@ mod imp {
         pub fn join(self) {
             self.quitting.store(true, Ordering::SeqCst);
             let dur = Duration::from_millis(10);
-            loop {
+            let mut done = false;
+            for _ in 0..100 {
                 unsafe {
-                    let r = libc::pthread_kill(self.thread.as_pthread_t(),
-                                               libc::SIGUSR1);
-                    if r != 0 {
-                        panic!("error in pthread_kill: {}",
-                               io::Error::last_os_error());
-                    }
+                    // Ignore the return value here of `pthread_kill`,
+                    // apparently on OSX if you kill a dead thread it will
+                    // return an error, but on other platforms it may not. In
+                    // that sense we don't actually know if this will succeed or
+                    // not!
+                    libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
                     if self.rx_done.recv_timeout(dur).is_ok() {
+                        done = true;
                         break
                     }
                 }
+            }
+            if !done {
+                panic!("failed to shut down worker thread");
             }
             self.thread.join().unwrap();
         }

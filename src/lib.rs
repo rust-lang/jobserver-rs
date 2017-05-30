@@ -392,7 +392,7 @@ mod imp {
     use std::process::Command;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
-    use std::sync::mpsc::{self, Receiver};
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
     use std::sync::{Arc, Once, ONCE_INIT};
     use std::thread::{JoinHandle, Builder};
     use std::time::Duration;
@@ -585,16 +585,20 @@ mod imp {
                     // that sense we don't actually know if this will succeed or
                     // not!
                     libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
-                    if self.rx_done.recv_timeout(dur).is_ok() {
-                        done = true;
-                        break
+                    match self.rx_done.recv_timeout(dur) {
+                        Ok(()) |
+                        Err(RecvTimeoutError::Disconnected) => {
+                            done = true;
+                            break
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
                     }
                 }
             }
             if !done {
                 panic!("failed to shut down worker thread");
             }
-            self.thread.join().unwrap();
+            drop(self.thread.join());
         }
     }
 
@@ -840,7 +844,7 @@ mod imp {
             if r == 0 {
                 panic!("failed to set event: {}", io::Error::last_os_error());
             }
-            self.thread.join().unwrap();
+            drop(self.thread.join());
         }
     }
 }

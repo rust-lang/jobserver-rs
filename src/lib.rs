@@ -75,7 +75,7 @@
 //!
 //! [docs]: http://make.mad-scientist.net/papers/jobserver-implementation/
 
-#![deny(missing_docs)]
+#![deny(missing_docs, missing_debug_implementations)]
 #![doc(html_root_url = "https://docs.rs/jobserver/0.1")]
 
 use std::env;
@@ -97,7 +97,7 @@ use std::sync::mpsc::{self, Sender};
 ///
 /// Note that a `Client` implements the `Clone` trait, and all instances of a
 /// `Client` refer to the same jobserver instance.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Client {
     inner: Arc<imp::Client>,
 }
@@ -106,6 +106,7 @@ pub struct Client {
 ///
 /// This token will be released back to the jobserver when it is dropped and
 /// otherwise represents the ability to spawn off another thread of work.
+#[derive(Debug)]
 pub struct Acquired {
     client: Arc<imp::Client>,
     data: imp::Acquired,
@@ -357,6 +358,7 @@ impl Drop for Acquired {
 
 /// Structure returned from `Client::into_helper_thread` to manage the lifetime
 /// of the helper thread returned, see those associated docs for more info.
+#[derive(Debug)]
 pub struct HelperThread {
     inner: Option<imp::Helper>,
     tx: Option<Sender<()>>,
@@ -397,11 +399,13 @@ mod imp {
 
     use self::libc::c_int;
 
+    #[derive(Debug)]
     pub struct Client {
         read: File,
         write: File,
     }
 
+    #[derive(Debug)]
     pub struct Acquired {
         byte: u8,
     }
@@ -504,6 +508,7 @@ mod imp {
         }
     }
 
+    #[derive(Debug)]
     pub struct Helper {
         thread: JoinHandle<()>,
         quitting: Arc<AtomicBool>,
@@ -660,16 +665,19 @@ mod imp {
     use std::sync::mpsc::Receiver;
     use std::thread::{Builder, JoinHandle};
 
+    #[derive(Debug)]
     pub struct Client {
         sem: Handle,
         name: String,
     }
 
+    #[derive(Debug)]
     struct Handle(winapi::HANDLE);
     // HANDLE is a raw ptr, but we're send/sync
     unsafe impl Sync for Handle {}
     unsafe impl Send for Handle {}
 
+    #[derive(Debug)]
     pub struct Acquired;
 
     const SEMAPHORE_MODIFY_STATE: winapi::DWORD = 0x2;
@@ -768,6 +776,7 @@ mod imp {
         }
     }
 
+    #[derive(Debug)]
     pub struct Helper {
         event: Arc<Handle>,
         thread: JoinHandle<()>,

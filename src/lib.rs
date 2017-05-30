@@ -480,13 +480,19 @@ mod imp {
 
         pub fn acquire(&self) -> io::Result<Acquired> {
             let mut buf = [0];
-            (&self.read).read(&mut buf)?;
-            Ok(Acquired { byte: buf[0] })
+            match (&self.read).read(&mut buf)? {
+                1 => Ok(Acquired { byte: buf[0] }),
+                _ => Err(io::Error::new(io::ErrorKind::Other,
+                                        "early EOF on jobserver pipe")),
+            }
         }
 
         pub fn release(&self, data: &Acquired) -> io::Result<()> {
-            (&self.write).write(&[data.byte])?;
-            Ok(())
+            match (&self.write).write(&[data.byte])? {
+                1 => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::Other,
+                                        "failed to write token back to jobserver")),
+            }
         }
 
         pub fn string_arg(&self) -> String {

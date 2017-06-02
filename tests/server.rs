@@ -130,3 +130,16 @@ bar:
 
     assert!(output.status.success());
 }
+
+#[test]
+fn zero_client() {
+    let client = t!(Client::new(0));
+    let (tx, rx) = mpsc::channel();
+    let helper = client.into_helper_thread(move |a| drop(tx.send(a))).unwrap();
+    helper.request_token();
+    helper.request_token();
+
+    for _ in 0..1000 {
+        assert!(rx.try_recv().is_err());
+    }
+}

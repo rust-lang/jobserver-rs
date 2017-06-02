@@ -696,13 +696,20 @@ mod imp {
         pub fn new(limit: usize) -> io::Result<Client> {
             // Try a bunch of random semaphore names until we get a unique one,
             // but don't try for too long.
+            //
+            // Note that `limit == 0` is a valid argument above but Windows
+            // won't let us create a semaphore with 0 slots available to it. Get
+            // `limit == 0` working by creating a semaphore instead with one
+            // slot and then immediately acquire it (without ever releaseing it
+            // back).
             for _ in 0..100 {
                 let mut name = format!("__rust_jobserver_semaphore_{}\0",
                                        rand::random::<u32>());
                 unsafe {
+                    let create_limit = if limit == 0 {1} else {limit};
                     let r = kernel32::CreateSemaphoreA(ptr::null_mut(),
-                                                       limit as winapi::LONG,
-                                                       limit as winapi::LONG,
+                                                       create_limit as winapi::LONG,
+                                                       create_limit as winapi::LONG,
                                                        name.as_ptr() as *const _);
                     if r.is_null() {
                         return Err(io::Error::last_os_error())
@@ -714,10 +721,14 @@ mod imp {
                         continue
                     }
                     name.pop(); // chop off the trailing nul
-                    return Ok(Client {
+                    let client = Client {
                         sem: handle,
                         name: name,
-                    })
+                    };
+                    if create_limit != limit {
+                        client.acquire()?;
+                    }
+                    return Ok(client)
                 }
             }
 

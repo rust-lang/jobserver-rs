@@ -4,6 +4,7 @@ rust: stable
 matrix:
   include:
     - os: osx
+    - rust: stable
     - rust: beta
     - rust: nightly
       before_script:

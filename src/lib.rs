@@ -531,7 +531,7 @@ mod imp {
         USR1_INIT.call_once(|| unsafe {
             let mut new: libc::sigaction = mem::zeroed();
             new.sa_sigaction = sigusr1_handler as usize;
-            new.sa_flags = libc::SA_SIGINFO;
+            new.sa_flags = libc::SA_SIGINFO as _;
             if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
                 err = Some(io::Error::last_os_error());
             }
@@ -602,11 +602,18 @@ mod imp {
         }
     }
 
+    #[allow(unused_assignments)]
     fn is_pipe(fd: c_int) -> bool {
         unsafe {
             let mut stat = mem::zeroed();
             if libc::fstat(fd, &mut stat) == 0 {
-                stat.st_mode & libc::S_IFIFO == libc::S_IFIFO
+                // On android arm and i686 mode_t is u16 and st_mode is u32,
+                // this generates a type mismatch when S_IFIFO (declared as mode_t)
+                // is used in operations with st_mode, so we use this workaround
+                // to get the value of S_IFIFO with the same type of st_mode.
+                let mut s_ififo = stat.st_mode;
+                s_ififo = libc::S_IFIFO as _;
+                stat.st_mode & s_ififo == s_ififo
             } else {
                 false
             }

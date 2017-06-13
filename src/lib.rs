@@ -670,9 +670,7 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    extern crate kernel32;
     extern crate rand;
-    extern crate winapi;
 
     use std::ffi::CString;
     use std::io;
@@ -689,15 +687,45 @@ mod imp {
     }
 
     #[derive(Debug)]
-    struct Handle(winapi::HANDLE);
-    // HANDLE is a raw ptr, but we're send/sync
-    unsafe impl Sync for Handle {}
-    unsafe impl Send for Handle {}
-
-    #[derive(Debug)]
     pub struct Acquired;
 
-    const SEMAPHORE_MODIFY_STATE: winapi::DWORD = 0x2;
+    type BOOL = i32;
+    type DWORD = u32;
+    type HANDLE = *mut u8;
+    type LONG = i32;
+
+    const ERROR_ALREADY_EXISTS: DWORD = 183;
+    const FALSE: BOOL = 0;
+    const INFINITE: DWORD = 0xffffffff;
+    const SEMAPHORE_MODIFY_STATE: DWORD = 0x2;
+    const SYNCHRONIZE: DWORD = 0x00100000;
+    const TRUE: BOOL = 1;
+    const WAIT_OBJECT_0: DWORD = 0;
+
+    extern "system" {
+        fn CloseHandle(handle: HANDLE) -> BOOL;
+        fn SetEvent(hEvent: HANDLE) -> BOOL;
+        fn WaitForMultipleObjects(ncount: DWORD,
+                                  lpHandles: *const HANDLE,
+                                  bWaitAll: BOOL,
+                                  dwMilliseconds: DWORD) -> DWORD;
+        fn CreateEventA(lpEventAttributes: *mut u8,
+                        bManualReset: BOOL,
+                        bInitialState: BOOL,
+                        lpName: *const i8) -> HANDLE;
+        fn ReleaseSemaphore(hSemaphore: HANDLE,
+                            lReleaseCount: LONG,
+                            lpPreviousCount: *mut LONG) -> BOOL;
+        fn CreateSemaphoreA(lpEventAttributes: *mut u8,
+                            lInitialCount: LONG,
+                            lMaximumCount: LONG,
+                            lpName: *const i8) -> HANDLE;
+        fn OpenSemaphoreA(dwDesiredAccess: DWORD,
+                          bInheritHandle: BOOL,
+                          lpName: *const i8) -> HANDLE;
+        fn WaitForSingleObject(hHandle: HANDLE,
+                               dwMilliseconds: DWORD) -> DWORD;
+    }
 
     impl Client {
         pub fn new(limit: usize) -> io::Result<Client> {
@@ -714,17 +742,17 @@ mod imp {
                                        rand::random::<u32>());
                 unsafe {
                     let create_limit = if limit == 0 {1} else {limit};
-                    let r = kernel32::CreateSemaphoreA(ptr::null_mut(),
-                                                       create_limit as winapi::LONG,
-                                                       create_limit as winapi::LONG,
-                                                       name.as_ptr() as *const _);
+                    let r = CreateSemaphoreA(ptr::null_mut(),
+                                             create_limit as LONG,
+                                             create_limit as LONG,
+                                             name.as_ptr() as *const _);
                     if r.is_null() {
                         return Err(io::Error::last_os_error())
                     }
                     let handle = Handle(r);
 
                     let err = io::Error::last_os_error();
-                    if err.raw_os_error() == Some(winapi::ERROR_ALREADY_EXISTS as i32) {
+                    if err.raw_os_error() == Some(ERROR_ALREADY_EXISTS as i32) {
                         continue
                     }
                     name.pop(); // chop off the trailing nul
@@ -749,10 +777,9 @@ mod imp {
                 Err(_) => return None,
             };
 
-            let sem = kernel32::OpenSemaphoreA(winapi::SYNCHRONIZE |
-                                                SEMAPHORE_MODIFY_STATE,
-                                               winapi::FALSE,
-                                               name.as_ptr());
+            let sem = OpenSemaphoreA(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE,
+                                     FALSE,
+                                     name.as_ptr());
             if sem.is_null() {
                 None
             } else {
@@ -765,9 +792,8 @@ mod imp {
 
         pub fn acquire(&self) -> io::Result<Acquired> {
             unsafe {
-                let r = kernel32::WaitForSingleObject(self.sem.0,
-                                                      winapi::INFINITE);
-                if r == winapi::WAIT_OBJECT_0 {
+                let r = WaitForSingleObject(self.sem.0, INFINITE);
+                if r == WAIT_OBJECT_0 {
                     Ok(Acquired)
                 } else {
                     Err(io::Error::last_os_error())
@@ -777,7 +803,7 @@ mod imp {
 
         pub fn release(&self, _data: &Acquired) -> io::Result<()> {
             unsafe {
-                let r = kernel32::ReleaseSemaphore(self.sem.0, 1, ptr::null_mut());
+                let r = ReleaseSemaphore(self.sem.0, 1, ptr::null_mut());
                 if r != 0 {
                     Ok(())
                 } else {
@@ -796,10 +822,16 @@ mod imp {
         }
     }
 
+    #[derive(Debug)]
+    struct Handle(HANDLE);
+    // HANDLE is a raw ptr, but we're send/sync
+    unsafe impl Sync for Handle {}
+    unsafe impl Send for Handle {}
+
     impl Drop for Handle {
         fn drop(&mut self) {
             unsafe {
-                kernel32::CloseHandle(self.0);
+                CloseHandle(self.0);
             }
         }
     }
@@ -816,10 +848,7 @@ mod imp {
         -> io::Result<Helper>
     {
         let event = unsafe {
-            let r = kernel32::CreateEventA(ptr::null_mut(),
-                                           winapi::TRUE,
-                                           winapi::FALSE,
-                                           ptr::null());
+            let r = CreateEventA(ptr::null_mut(), TRUE, FALSE, ptr::null());
             if r.is_null() {
                 return Err(io::Error::last_os_error())
             } else {
@@ -832,15 +861,12 @@ mod imp {
             let objects = [event2.0, client.inner.sem.0];
             for () in rx {
                 let r = unsafe {
-                    kernel32::WaitForMultipleObjects(2,
-                                                     objects.as_ptr(),
-                                                     winapi::FALSE,
-                                                     winapi::INFINITE)
+                    WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE)
                 };
-                if r == winapi::WAIT_OBJECT_0 {
+                if r == WAIT_OBJECT_0 {
                     break
                 }
-                if r == winapi::WAIT_OBJECT_0 + 1 {
+                if r == WAIT_OBJECT_0 + 1 {
                     f(Ok(::Acquired {
                         client: client.inner.clone(),
                         data: Acquired,
@@ -858,7 +884,7 @@ mod imp {
 
     impl Helper {
         pub fn join(self) {
-            let r = unsafe { kernel32::SetEvent(self.event.0) };
+            let r = unsafe { SetEvent(self.event.0) };
             if r == 0 {
                 panic!("failed to set event: {}", io::Error::last_os_error());
             }

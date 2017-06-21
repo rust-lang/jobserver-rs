@@ -617,8 +617,15 @@ mod imp {
         let mut err = None;
         USR1_INIT.call_once(|| unsafe {
             let mut new: libc::sigaction = mem::zeroed();
-            new.sa_sigaction = sigusr1_handler as usize;
-            new.sa_flags = libc::SA_SIGINFO as _;
+            #[cfg(target_os = "redox")]
+            {
+                new.sa_handler = sigusr1_handler as usize;
+            }
+            #[cfg(not(target_os = "redox"))]
+            {
+                new.sa_sigaction = sigusr1_handler as usize;
+                new.sa_flags = libc::SA_SIGINFO as _;
+            }
             if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
                 err = Some(io::Error::last_os_error());
             }
@@ -670,6 +677,14 @@ mod imp {
                     // return an error, but on other platforms it may not. In
                     // that sense we don't actually know if this will succeed or
                     // not!
+                    #[cfg(target_os = "redox")]
+                    {
+                        extern "C" {
+                            fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int;
+                        }
+                        pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
+                    }
+                    #[cfg(not(target_os = "redox"))]
                     libc::pthread_kill(self.thread.as_pthread_t() as _, libc::SIGUSR1);
                     match self.rx_done.recv_timeout(dur) {
                         Ok(()) | Err(RecvTimeoutError::Disconnected) => {
@@ -716,6 +731,12 @@ mod imp {
         }
     }
 
+    #[cfg(target_os = "redox")]
+    extern fn sigusr1_handler(_signum: c_int) {
+        // nothing to do
+    }
+
+    #[cfg(not(target_os = "redox"))]
     extern "C" fn sigusr1_handler(
         _signum: c_int,
         _info: *mut libc::siginfo_t,

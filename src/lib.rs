@@ -189,7 +189,9 @@ impl Client {
     /// Note, though, that on Windows it should be safe to call this function
     /// any number of times.
     pub unsafe fn from_env() -> Option<Client> {
-        let var = match env::var("MAKEFLAGS").or(env::var("MFLAGS")) {
+        let var = match env::var("CARGO_MAKEFLAGS")
+                            .or(env::var("MAKEFLAGS"))
+                            .or(env::var("MFLAGS")) {
             Ok(s) => s,
             Err(_) => return None,
         };
@@ -246,18 +248,16 @@ impl Client {
     ///
     /// ## Platform-specific behavior
     ///
-    /// On Unix and Windows this will clobber the `MAKEFLAGS` and `MFLAGS`
-    /// environment variables for the child process, and on Unix this will also
-    /// allow the two file descriptors for this client to be inherited to the
-    /// child.
+    /// On Unix and Windows this will clobber the `CARGO_MAKEFLAGS` environment
+    /// variables for the child process, and on Unix this will also allow the
+    /// two file descriptors for this client to be inherited to the child.
     pub fn configure(&self, cmd: &mut Command) {
         let arg = self.inner.string_arg();
         // Older implementations of make use `--jobserver-fds` and newer
         // implementations use `--jobserver-auth`, pass both to try to catch
         // both implementations.
         let value = format!("--jobserver-fds={0} --jobserver-auth={0}", arg);
-        cmd.env("MAKEFLAGS", &value);
-        cmd.env("MFLAGS", &value);
+        cmd.env("CARGO_MAKEFLAGS", &value);
         self.inner.configure(cmd);
     }
 

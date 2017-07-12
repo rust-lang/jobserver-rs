@@ -18,6 +18,19 @@ macro_rules! t {
 }
 
 fn main() {
+    if env::var("_DO_THE_TEST").is_ok() {
+        std::process::exit(
+            Command::new(env::var_os("MAKE").unwrap())
+                .env("MAKEFLAGS", env::var_os("CARGO_MAKEFLAGS").unwrap())
+                .env_remove("_DO_THE_TEST")
+                .args(&env::args_os().skip(1).collect::<Vec<_>>())
+                .status()
+                .unwrap()
+                .code()
+                .unwrap_or(1)
+        );
+    }
+
     if let Ok(s) = env::var("TEST_ADDR") {
         let mut contents = Vec::new();
         t!(t!(TcpStream::connect(&s)).read_to_end(&mut contents));
@@ -28,11 +41,15 @@ fn main() {
     let td = TempDir::new("foo").unwrap();
 
     let prog = env::var("MAKE").unwrap_or("make".to_string());
-    let mut cmd = Command::new(prog);
-    cmd.current_dir(td.path());
 
     let me = t!(env::current_exe());
     let me = me.to_str().unwrap();
+
+    let mut cmd = Command::new(&me);
+    cmd.current_dir(td.path());
+    cmd.env("MAKE", prog);
+    cmd.env("_DO_THE_TEST", "1");
+
     t!(t!(File::create(td.path().join("Makefile"))).write_all(format!("\
 all: foo bar
 foo:
@@ -58,4 +75,3 @@ bar:
 
     assert!(t!(child.wait()).success());
 }
-

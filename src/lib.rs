@@ -479,15 +479,55 @@ mod imp {
         }
 
         pub fn acquire(&self) -> io::Result<Acquired> {
-            let mut buf = [0];
-            match (&self.read).read(&mut buf)? {
-                1 => Ok(Acquired { byte: buf[0] }),
-                _ => Err(io::Error::new(io::ErrorKind::Other,
-                                        "early EOF on jobserver pipe")),
+            // We don't actually know if the file descriptor here is set in
+            // blocking or nonblocking mode. AFAIK all released versions of
+            // `make` use blocking fds for the jobserver, but the unreleased
+            // version of `make` doesn't. In the unreleased version jobserver
+            // fds are set to nonblocking and combined with `pselect`
+            // internally.
+            //
+            // Here we try to be compatible with both strategies. We
+            // unconditionally expect the file descriptor to be in nonblocking
+            // mode and if it happens to be in blocking mode then most of this
+            // won't end up actually being necessary!
+            //
+            // We use `poll` here to block this thread waiting for read
+            // readiness, and then afterwards we perform the `read` itself. If
+            // the `read` returns that it would block then we start over and try
+            // again.
+            unsafe {
+                let mut fd: libc::pollfd = mem::zeroed();
+                fd.fd = self.read.as_raw_fd();
+                fd.events = libc::POLLIN;
+                loop {
+                    fd.revents = 0;
+                    match libc::poll(&mut fd, 1, -1) {
+                        0 => panic!("timeout in poll?"),
+                        n if n < 0 => return Err(io::Error::last_os_error()),
+                        _ => {}
+                    }
+                    if fd.revents == 0 {
+                        continue
+                    }
+                    let mut buf = [0];
+                    match (&self.read).read(&mut buf) {
+                        Ok(1) => return Ok(Acquired { byte: buf[0] }),
+                        Ok(_) => {
+                            return Err(io::Error::new(io::ErrorKind::Other,
+                                                      "early EOF on jobserver pipe"))
+                        }
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(e) => return Err(e),
+                    }
+                }
             }
         }
 
         pub fn release(&self, data: &Acquired) -> io::Result<()> {
+            // Note that the fd may be nonblocking but we're going to go ahead
+            // and assume that the writes here are always nonblocking (we can
+            // always quickly release a token). If that turns out to not be the
+            // case we'll get an error anyway!
             match (&self.write).write(&[data.byte])? {
                 1 => Ok(()),
                 _ => Err(io::Error::new(io::ErrorKind::Other,

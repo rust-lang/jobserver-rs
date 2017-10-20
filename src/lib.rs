@@ -501,10 +501,12 @@ mod imp {
                 fd.events = libc::POLLIN;
                 loop {
                     fd.revents = 0;
-                    match libc::poll(&mut fd, 1, -1) {
-                        0 => panic!("timeout in poll?"),
-                        n if n < 0 => return Err(io::Error::last_os_error()),
-                        _ => {}
+                    if libc::poll(&mut fd, 1, -1) == -1 {
+                        let err = io::Error::last_os_error();
+                        if err.kind() == io::ErrorKind::Interrupted {
+                            continue
+                        }
+                        return Err(err)
                     }
                     if fd.revents == 0 {
                         continue

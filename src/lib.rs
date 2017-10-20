@@ -495,6 +495,9 @@ mod imp {
             // readiness, and then afterwards we perform the `read` itself. If
             // the `read` returns that it would block then we start over and try
             // again.
+            //
+            // Also note that we explicitly don't handle EINTR here. That's used
+            // to shut us down, so we otherwise punt all errors upwards.
             unsafe {
                 let mut fd: libc::pollfd = mem::zeroed();
                 fd.fd = self.read.as_raw_fd();
@@ -502,11 +505,7 @@ mod imp {
                 loop {
                     fd.revents = 0;
                     if libc::poll(&mut fd, 1, -1) == -1 {
-                        let err = io::Error::last_os_error();
-                        if err.kind() == io::ErrorKind::Interrupted {
-                            continue
-                        }
-                        return Err(err)
+                        return Err(io::Error::last_os_error())
                     }
                     if fd.revents == 0 {
                         continue

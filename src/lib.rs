@@ -391,7 +391,9 @@ mod imp {
     use std::os::unix::prelude::*;
     use std::process::Command;
     use std::ptr;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize,
+                            ATOMIC_BOOL_INIT, ATOMIC_USIZE_INIT,
+                            Ordering};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
     use std::sync::{Arc, Once, ONCE_INIT};
     use std::thread::{JoinHandle, Builder};
@@ -422,13 +424,21 @@ mod imp {
         }
 
         unsafe fn mk() -> io::Result<Client> {
+            static INVALID: AtomicBool = ATOMIC_BOOL_INIT;
             let mut pipes = [0; 2];
 
-            // Attempt atomically-create-with-cloexec if we can
-            if cfg!(target_os = "linux") {
+            // Attempt atomically-create-with-cloexec if we can.  Note that even
+            // when libc has the symbol, `pipe2` might still not be supported on
+            // the running kernel -> `ENOSYS`, then we need to use the fallback.
+            if cfg!(target_os = "linux") && !INVALID.load(Ordering::SeqCst) {
                 if let Some(pipe2) = pipe2() {
-                    cvt(pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC))?;
-                    return Ok(Client::from_fds(pipes[0], pipes[1]))
+                    match cvt(pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC)) {
+                        Ok(_) => return Ok(Client::from_fds(pipes[0], pipes[1])),
+                        Err(ref e) if e.raw_os_error() == Some(libc::ENOSYS) => {
+                            INVALID.store(true, Ordering::SeqCst);
+                        }
+                        Err(e) => return Err(e),
+                    }
                 }
             }
 

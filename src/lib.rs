@@ -472,7 +472,7 @@ mod imp {
             // If we're called from `make` *without* the leading + on our rule
             // then we'll have `MAKEFLAGS` env vars but won't actually have
             // access to the file descriptors.
-            if is_pipe(read) && is_pipe(write) {
+            if is_valid_fd(read) && is_valid_fd(write) {
                 drop(set_cloexec(read, true));
                 drop(set_cloexec(write, true));
                 Some(Client::from_fds(read, write))
@@ -653,21 +653,9 @@ mod imp {
         }
     }
 
-    #[allow(unused_assignments)]
-    fn is_pipe(fd: c_int) -> bool {
+    fn is_valid_fd(fd: c_int) -> bool {
         unsafe {
-            let mut stat = mem::zeroed();
-            if libc::fstat(fd, &mut stat) == 0 {
-                // On android arm and i686 mode_t is u16 and st_mode is u32,
-                // this generates a type mismatch when S_IFIFO (declared as mode_t)
-                // is used in operations with st_mode, so we use this workaround
-                // to get the value of S_IFIFO with the same type of st_mode.
-                let mut s_ififo = stat.st_mode;
-                s_ififo = libc::S_IFIFO as _;
-                stat.st_mode & s_ififo == s_ififo
-            } else {
-                false
-            }
+            return libc::fcntl(fd, libc::F_GETFD) != -1;
         }
     }
 

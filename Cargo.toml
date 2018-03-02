@@ -14,7 +14,7 @@ An implementation of the GNU make jobserver for Rust
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-rand = "0.3"
+rand = "0.4"
 
 [dev-dependencies]
 futures = "0.1"

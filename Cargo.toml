@@ -10,6 +10,9 @@ description = """
 An implementation of the GNU make jobserver for Rust
 """
 
+[dependencies]
+log = "0.4"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

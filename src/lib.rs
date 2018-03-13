@@ -399,7 +399,7 @@ mod imp {
                             Ordering};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
     use std::sync::{Arc, Once, ONCE_INIT};
-    use std::thread::{JoinHandle, Builder};
+    use std::thread::{self, JoinHandle, Builder};
     use std::time::Duration;
 
     use self::libc::c_int;
@@ -651,11 +651,11 @@ mod imp {
                         Err(RecvTimeoutError::Timeout) => {}
                     }
                 }
+                thread::yield_now();
             }
-            if !done {
-                panic!("failed to shut down worker thread");
+            if done {
+                drop(self.thread.join());
             }
-            drop(self.thread.join());
         }
     }
 

@@ -115,7 +115,6 @@ fn main() {
     let filter = env::args().skip(1).next();
 
     let mut core = t!(Core::new());
-    let ref handle = core.handle();
 
     let futures = TESTS.iter().filter(|test| {
         match filter {
@@ -136,7 +135,7 @@ all:
         cmd.args(test.make_args);
         cmd.current_dir(td.path());
         future::lazy(move || {
-            cmd.output_async(&handle).map(move |e| {
+            cmd.output_async().map(move |e| {
                 drop(td);
                 (test, e)
             })

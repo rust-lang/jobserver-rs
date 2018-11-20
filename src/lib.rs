@@ -563,11 +563,16 @@ mod imp {
             // integers through `string_arg` above.
             let read = self.read.as_raw_fd();
             let write = self.write.as_raw_fd();
-            cmd.before_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
-                Ok(())
-            });
+            #[allow(unused_unsafe)] // for a rustc experiment
+            unsafe {
+                // We are not exploiting `fork` to duplicate anything we shouldn't duplicate,
+                // so this `before_exec` is fine.
+                cmd.before_exec(move || {
+                    set_cloexec(read, false)?;
+                    set_cloexec(write, false)?;
+                    Ok(())
+                });
+            }
         }
     }
 

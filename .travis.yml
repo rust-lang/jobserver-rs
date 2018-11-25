@@ -4,6 +4,7 @@ rust: stable
 matrix:
   include:
     - os: osx
+    - os: windows
     - rust: stable
     - rust: beta
     - rust: nightly

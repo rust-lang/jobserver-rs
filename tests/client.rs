@@ -103,6 +103,16 @@ const TESTS: &[Test] = &[
             assert!(hit.load(Ordering::SeqCst));
         },
     },
+    Test {
+        name: "acquire_raw",
+        make_args: &["-j2"],
+        rule: &|me| format!("+{}", me),
+        f: &|| {
+            let c = unsafe { Client::from_env().unwrap() };
+            c.acquire_raw().unwrap();
+            c.release_raw().unwrap();
+        },
+    },
 ];
 
 fn main() {

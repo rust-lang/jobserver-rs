@@ -351,11 +351,31 @@ impl Client {
             tx: Some(tx),
         })
     }
+
+    /// Blocks the current thread until a token is acquired.
+    ///
+    /// This is the same as `acquire`, except that it doesn't return an RAII
+    /// helper. If successful the process will need to guarantee that
+    /// `release_raw` is called in the future.
+    pub fn acquire_raw(&self) -> io::Result<()> {
+        self.inner.acquire()?;
+        Ok(())
+    }
+
+    /// Releases a jobserver token back to the original jobserver.
+    ///
+    /// This is intended to be paired with `acquire_raw` if it was called, but
+    /// in some situations it could also be called to relinquish a process's
+    /// implicit token temporarily which is then re-acquired later.
+    pub fn release_raw(&self) -> io::Result<()> {
+        self.inner.release(None)?;
+        Ok(())
+    }
 }
 
 impl Drop for Acquired {
     fn drop(&mut self) {
-        drop(self.client.release(&self.data));
+        drop(self.client.release(Some(&self.data)));
     }
 }
 
@@ -540,12 +560,13 @@ mod imp {
             }
         }
 
-        pub fn release(&self, data: &Acquired) -> io::Result<()> {
+        pub fn release(&self, data: Option<&Acquired>) -> io::Result<()> {
             // Note that the fd may be nonblocking but we're going to go ahead
             // and assume that the writes here are always nonblocking (we can
             // always quickly release a token). If that turns out to not be the
             // case we'll get an error anyway!
-            match (&self.write).write(&[data.byte])? {
+            let byte = data.map(|d| d.byte).unwrap_or(b'+');
+            match (&self.write).write(&[byte])? {
                 1 => Ok(()),
                 _ => Err(io::Error::new(io::ErrorKind::Other,
                                         "failed to write token back to jobserver")),
@@ -849,7 +870,7 @@ mod imp {
             }
         }
 
-        pub fn release(&self, _data: &Acquired) -> io::Result<()> {
+        pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
             unsafe {
                 let r = ReleaseSemaphore(self.sem.0, 1, ptr::null_mut());
                 if r != 0 {

@@ -255,16 +255,15 @@ impl Client {
     /// variables for the child process, and on Unix this will also allow the
     /// two file descriptors for this client to be inherited to the child.
     ///
-    /// This method doesn't exist on platforms other than Unix and Windows, as
-    /// those don't have a real jobserver implementation.
-    #[cfg(any(unix, windows))]
+    /// On platforms other than Unix and Windows this does nothing.
     pub fn configure(&self, cmd: &mut Command) {
-        let arg = self.inner.string_arg();
-        // Older implementations of make use `--jobserver-fds` and newer
-        // implementations use `--jobserver-auth`, pass both to try to catch
-        // both implementations.
-        let value = format!("--jobserver-fds={0} --jobserver-auth={0}", arg);
-        cmd.env("CARGO_MAKEFLAGS", &value);
+        if let Some(arg) = self.inner.string_arg() {
+            // Older implementations of make use `--jobserver-fds` and newer
+            // implementations use `--jobserver-auth`, pass both to try to catch
+            // both implementations.
+            let value = format!("--jobserver-fds={0} --jobserver-auth={0}", arg);
+            cmd.env("CARGO_MAKEFLAGS", &value);
+        }
         self.inner.configure(cmd);
     }
 
@@ -577,8 +576,8 @@ mod imp {
             }
         }
 
-        pub fn string_arg(&self) -> String {
-            format!("{},{} -j", self.read.as_raw_fd(), self.write.as_raw_fd())
+        pub fn string_arg(&self) -> Option<String> {
+            Some(format!("{},{} -j", self.read.as_raw_fd(), self.write.as_raw_fd()))
         }
 
         pub fn configure(&self, cmd: &mut Command) {
@@ -885,8 +884,8 @@ mod imp {
             }
         }
 
-        pub fn string_arg(&self) -> String {
-            self.name.clone()
+        pub fn string_arg(&self) -> Option<String> {
+            Some(self.name.clone())
         }
 
         pub fn configure(&self, _cmd: &mut Command) {
@@ -974,6 +973,7 @@ mod imp {
     use std::sync::mpsc::{self, SyncSender, Receiver, RecvTimeoutError};
     use std::thread::{self, Builder, JoinHandle};
     use std::time::Duration;
+    use std::process::Command;
 
     #[derive(Debug)]
     pub struct Client {
@@ -1009,6 +1009,12 @@ mod imp {
             self.tx.send(()).unwrap();
             Ok(())
         }
+
+        pub fn string_arg(&self) -> Option<String> {
+            None
+        }
+
+        pub fn configure(&self, _cmd: &mut Command) {}
     }
 
     #[derive(Debug)]

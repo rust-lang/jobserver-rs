@@ -254,6 +254,10 @@ impl Client {
     /// On Unix and Windows this will clobber the `CARGO_MAKEFLAGS` environment
     /// variables for the child process, and on Unix this will also allow the
     /// two file descriptors for this client to be inherited to the child.
+    ///
+    /// This method doesn't exist on platforms other than Unix and Windows, as
+    /// those don't have a real jobserver implementation.
+    #[cfg(any(unix, windows))]
     pub fn configure(&self, cmd: &mut Command) {
         let arg = self.inner.string_arg();
         // Older implementations of make use `--jobserver-fds` and newer
@@ -958,6 +962,117 @@ mod imp {
                 panic!("failed to set event: {}", io::Error::last_os_error());
             }
             drop(self.thread.join());
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod imp {
+    use std::io;
+    use std::sync::{Arc, Mutex};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc::{self, SyncSender, Receiver, RecvTimeoutError};
+    use std::thread::{self, Builder, JoinHandle};
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    pub struct Client {
+        tx: SyncSender<()>,
+        rx: Mutex<Receiver<()>>,
+    }
+
+    #[derive(Debug)]
+    pub struct Acquired(());
+
+    impl Client {
+        pub fn new(limit: usize) -> io::Result<Client> {
+            let (tx, rx) = mpsc::sync_channel(limit);
+            for _ in 0..limit {
+                tx.send(()).unwrap();
+            }
+            Ok(Client {
+                tx,
+                rx: Mutex::new(rx),
+            })
+        }
+
+        pub unsafe fn open(_s: &str) -> Option<Client> {
+            None
+        }
+
+        pub fn acquire(&self) -> io::Result<Acquired> {
+            self.rx.lock().unwrap().recv().unwrap();
+            Ok(Acquired(()))
+        }
+
+        pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
+            self.tx.send(()).unwrap();
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Helper {
+        thread: JoinHandle<()>,
+        quitting: Arc<AtomicBool>,
+        rx_done: Receiver<()>,
+    }
+
+    pub fn spawn_helper(client: ::Client,
+                        rx: Receiver<()>,
+                        mut f: Box<FnMut(io::Result<::Acquired>) + Send>)
+        -> io::Result<Helper>
+    {
+        let quitting = Arc::new(AtomicBool::new(false));
+        let quitting2 = quitting.clone();
+        let (tx_done, rx_done) = mpsc::channel();
+        let thread = Builder::new().spawn(move || {
+            'outer:
+            for () in rx {
+                loop {
+                    let res = client.acquire();
+                    if let Err(ref e) = res {
+                        if e.kind() == io::ErrorKind::Interrupted {
+                            if quitting2.load(Ordering::SeqCst) {
+                                break 'outer
+                            } else {
+                                continue
+                            }
+                        }
+                    }
+                    f(res);
+                    break
+                }
+            }
+            tx_done.send(()).unwrap();
+        })?;
+
+        Ok(Helper {
+            thread: thread,
+            quitting: quitting,
+            rx_done: rx_done,
+        })
+    }
+
+    impl Helper {
+        pub fn join(self) {
+            self.quitting.store(true, Ordering::SeqCst);
+            let dur = Duration::from_millis(10);
+            let mut done = false;
+            for _ in 0..100 {
+                match self.rx_done.recv_timeout(dur) {
+                    Ok(()) |
+                    Err(RecvTimeoutError::Disconnected) => {
+                        done = true;
+                        break
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                }
+                thread::yield_now();
+            }
+            if done {
+                drop(self.thread.join());
+            }
         }
     }
 }

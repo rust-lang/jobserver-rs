@@ -970,9 +970,8 @@ mod imp {
     use std::io;
     use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::mpsc::{self, SyncSender, Receiver, RecvTimeoutError};
-    use std::thread::{self, Builder, JoinHandle};
-    use std::time::Duration;
+    use std::sync::mpsc::{self, SyncSender, Receiver};
+    use std::thread::{Builder, JoinHandle};
     use std::process::Command;
 
     #[derive(Debug)]
@@ -1063,22 +1062,8 @@ mod imp {
     impl Helper {
         pub fn join(self) {
             self.quitting.store(true, Ordering::SeqCst);
-            let dur = Duration::from_millis(10);
-            let mut done = false;
-            for _ in 0..100 {
-                match self.rx_done.recv_timeout(dur) {
-                    Ok(()) |
-                    Err(RecvTimeoutError::Disconnected) => {
-                        done = true;
-                        break
-                    }
-                    Err(RecvTimeoutError::Timeout) => {}
-                }
-                thread::yield_now();
-            }
-            if done {
-                drop(self.thread.join());
-            }
+            let _ = self.rx_done.recv();
+            drop(self.thread.join());
         }
     }
 }

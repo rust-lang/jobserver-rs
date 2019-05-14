@@ -1020,7 +1020,6 @@ mod imp {
     pub struct Helper {
         thread: JoinHandle<()>,
         quitting: Arc<AtomicBool>,
-        rx_done: Receiver<()>,
     }
 
     pub fn spawn_helper(client: ::Client,
@@ -1030,39 +1029,29 @@ mod imp {
     {
         let quitting = Arc::new(AtomicBool::new(false));
         let quitting2 = quitting.clone();
-        let (tx_done, rx_done) = mpsc::channel();
         let thread = Builder::new().spawn(move || {
             'outer:
             for () in rx {
                 loop {
                     let res = client.acquire();
-                    if let Err(ref e) = res {
-                        if e.kind() == io::ErrorKind::Interrupted {
-                            if quitting2.load(Ordering::SeqCst) {
-                                break 'outer
-                            } else {
-                                continue
-                            }
-                        }
+                    if quitting2.load(Ordering::SeqCst) {
+                        break 'outer;
                     }
                     f(res);
-                    break
+                    break;
                 }
             }
-            tx_done.send(()).unwrap();
         })?;
 
         Ok(Helper {
             thread: thread,
             quitting: quitting,
-            rx_done: rx_done,
         })
     }
 
     impl Helper {
         pub fn join(self) {
             self.quitting.store(true, Ordering::SeqCst);
-            let _ = self.rx_done.recv();
             drop(self.thread.join());
         }
     }

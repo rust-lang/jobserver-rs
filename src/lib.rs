@@ -967,8 +967,7 @@ mod imp {
 #[cfg(not(any(unix, windows)))]
 mod imp {
     use std::io;
-    use std::sync::{Arc, Mutex};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
     use std::sync::mpsc::{self, SyncSender, Receiver};
     use std::thread::{Builder, JoinHandle};
     use std::process::Command;
@@ -1023,7 +1022,6 @@ mod imp {
     #[derive(Debug)]
     pub struct Helper {
         thread: JoinHandle<()>,
-        quitting: Arc<AtomicBool>,
     }
 
     pub fn spawn_helper(client: ::Client,
@@ -1031,31 +1029,20 @@ mod imp {
                         mut f: Box<FnMut(io::Result<::Acquired>) + Send>)
         -> io::Result<Helper>
     {
-        let quitting = Arc::new(AtomicBool::new(false));
-        let quitting2 = quitting.clone();
         let thread = Builder::new().spawn(move || {
-            'outer:
             for () in rx {
-                loop {
-                    let res = client.acquire();
-                    if quitting2.load(Ordering::SeqCst) {
-                        break 'outer;
-                    }
-                    f(res);
-                    break;
-                }
+                let res = client.acquire();
+                f(res);
             }
         })?;
 
         Ok(Helper {
             thread: thread,
-            quitting: quitting,
         })
     }
 
     impl Helper {
         pub fn join(self) {
-            self.quitting.store(true, Ordering::SeqCst);
             drop(self.thread.join());
         }
     }

@@ -254,6 +254,8 @@ impl Client {
     /// On Unix and Windows this will clobber the `CARGO_MAKEFLAGS` environment
     /// variables for the child process, and on Unix this will also allow the
     /// two file descriptors for this client to be inherited to the child.
+    ///
+    /// On platforms other than Unix and Windows this panics.
     pub fn configure(&self, cmd: &mut Command) {
         let arg = self.inner.string_arg();
         // Older implementations of make use `--jobserver-fds` and newer
@@ -960,4 +962,95 @@ mod imp {
             drop(self.thread.join());
         }
     }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod imp {
+    use std::io;
+    use std::sync::Mutex;
+    use std::sync::mpsc::{self, SyncSender, Receiver};
+    use std::thread::{Builder, JoinHandle};
+    use std::process::Command;
+
+    #[derive(Debug)]
+    pub struct Client {
+        tx: SyncSender<()>,
+        rx: Mutex<Receiver<()>>,
+    }
+
+    #[derive(Debug)]
+    pub struct Acquired(());
+
+    impl Client {
+        pub fn new(limit: usize) -> io::Result<Client> {
+            let (tx, rx) = mpsc::sync_channel(limit);
+            for _ in 0..limit {
+                tx.send(()).unwrap();
+            }
+            Ok(Client {
+                tx,
+                rx: Mutex::new(rx),
+            })
+        }
+
+        pub unsafe fn open(_s: &str) -> Option<Client> {
+            None
+        }
+
+        pub fn acquire(&self) -> io::Result<Acquired> {
+            self.rx.lock().unwrap().recv().unwrap();
+            Ok(Acquired(()))
+        }
+
+        pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
+            self.tx.send(()).unwrap();
+            Ok(())
+        }
+
+        pub fn string_arg(&self) -> String {
+            panic!(
+                "On this platform there is no cross process jobserver support,
+                 so Client::configure is not supported."
+            );
+        }
+
+        pub fn configure(&self, _cmd: &mut Command) {
+            unreachable!();
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Helper {
+        thread: JoinHandle<()>,
+    }
+
+    pub fn spawn_helper(client: ::Client,
+                        rx: Receiver<()>,
+                        mut f: Box<FnMut(io::Result<::Acquired>) + Send>)
+        -> io::Result<Helper>
+    {
+        let thread = Builder::new().spawn(move || {
+            for () in rx {
+                let res = client.acquire();
+                f(res);
+            }
+        })?;
+
+        Ok(Helper {
+            thread: thread,
+        })
+    }
+
+    impl Helper {
+        pub fn join(self) {
+            drop(self.thread.join());
+        }
+    }
+}
+
+#[test]
+fn no_helper_deadlock() {
+    let x = crate::Client::new(32).unwrap();
+    let _y = x.clone();
+    std::mem::drop(x.into_helper_thread(|_| {}).unwrap());
 }

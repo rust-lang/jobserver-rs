@@ -664,7 +664,7 @@ mod imp {
                     // return an error, but on other platforms it may not. In
                     // that sense we don't actually know if this will succeed or
                     // not!
-                    libc::pthread_kill(self.thread.as_pthread_t(), libc::SIGUSR1);
+                    libc::pthread_kill(self.thread.as_pthread_t() as _, libc::SIGUSR1);
                     match self.rx_done.recv_timeout(dur) {
                         Ok(()) |
                         Err(RecvTimeoutError::Disconnected) => {

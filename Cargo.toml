@@ -17,7 +17,7 @@ log = "0.4.6"
 libc = "0.2.50"
 
 [target.'cfg(windows)'.dependencies]
-rand = "0.7.0"
+getrandom = "0.1.12"
 
 [dev-dependencies]
 futures = "0.1"

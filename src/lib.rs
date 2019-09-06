@@ -727,7 +727,7 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    extern crate rand;
+    extern crate getrandom;
 
     use std::ffi::CString;
     use std::io;
@@ -804,7 +804,15 @@ mod imp {
             // slot and then immediately acquire it (without ever releaseing it
             // back).
             for _ in 0..100 {
-                let mut name = format!("__rust_jobserver_semaphore_{}\0", rand::random::<u32>());
+                let mut bytes = [0; 4];
+                getrandom::getrandom(&mut bytes).map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("failed to get random bytes: {}", e),
+                    )
+                })?;
+                let mut name =
+                    format!("__rust_jobserver_semaphore_{}\0", u32::from_ne_bytes(bytes));
                 unsafe {
                     let create_limit = if limit == 0 { 1 } else { limit };
                     let r = CreateSemaphoreA(

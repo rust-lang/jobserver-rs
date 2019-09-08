@@ -13,7 +13,7 @@
 //! implemented with the `pipe` syscall and read/write ends of a pipe and on
 //! Windows this is implemented literally with IPC semaphores.
 //!
-//! The jobserver protocol in `make` also dictates when tokens are acquire to
+//! The jobserver protocol in `make` also dictates when tokens are acquired to
 //! run child work, and clients using this crate should take care to implement
 //! such details to ensure correct interoperation with `make` itself.
 //!

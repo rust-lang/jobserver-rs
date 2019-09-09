@@ -593,11 +593,13 @@ mod imp {
             // integers through `string_arg` above.
             let read = self.read.as_raw_fd();
             let write = self.write.as_raw_fd();
-            cmd.before_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
-                Ok(())
-            });
+            unsafe {
+                cmd.pre_exec(move || {
+                    set_cloexec(read, false)?;
+                    set_cloexec(write, false)?;
+                    Ok(())
+                });
+            }
         }
     }
 
@@ -611,7 +613,7 @@ mod imp {
     pub fn spawn_helper(
         client: ::Client,
         rx: Receiver<()>,
-        mut f: Box<FnMut(io::Result<::Acquired>) + Send>,
+        mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
     ) -> io::Result<Helper> {
         static USR1_INIT: Once = ONCE_INIT;
         let mut err = None;

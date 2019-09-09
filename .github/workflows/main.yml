@@ -55,6 +55,9 @@ jobs:
         MATRIX_CONTEXT: ${{ toJson(matrix) }}
       run: echo "$MATRIX_CONTEXT"
       shell: bash
+    - name: Dump env vars
+      run: env | sort
+      shell: bash
     - uses: actions/checkout@master
     - name: Install Rust (rustup)
       run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}

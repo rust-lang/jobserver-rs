@@ -9,9 +9,9 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 use futures::future::{self, Future};
@@ -22,10 +22,12 @@ use tokio_core::reactor::Core;
 use tokio_process::CommandExt;
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {}", stringify!($e), e),
+        }
+    };
 }
 
 struct Test {
@@ -117,7 +119,7 @@ const TESTS: &[Test] = &[
 
 fn main() {
     if let Ok(test) = env::var("TEST_TO_RUN") {
-        return (TESTS.iter().find(|t| t.name == test).unwrap().f)()
+        return (TESTS.iter().find(|t| t.name == test).unwrap().f)();
     }
 
     let me = t!(env::current_exe());
@@ -126,36 +128,40 @@ fn main() {
 
     let mut core = t!(Core::new());
 
-    let futures = TESTS.iter().filter(|test| {
-        match filter {
+    let futures = TESTS
+        .iter()
+        .filter(|test| match filter {
             Some(ref s) => test.name.contains(s),
             None => true,
-        }
-    }).map(|test| {
-        let td = t!(TempDir::new("foo"));
-        let makefile = format!("\
+        })
+        .map(|test| {
+            let td = t!(TempDir::new("foo"));
+            let makefile = format!(
+                "\
 all: export TEST_TO_RUN={}
 all:
 \t{}
-", test.name, (test.rule)(me));
-        t!(t!(File::create(td.path().join("Makefile")))
-           .write_all(makefile.as_bytes()));
-        let prog = env::var("MAKE").unwrap_or("make".to_string());
-        let mut cmd = Command::new(prog);
-        cmd.args(test.make_args);
-        cmd.current_dir(td.path());
-        future::lazy(move || {
-            cmd.output_async().map(move |e| {
-                drop(td);
-                (test, e)
+",
+                test.name,
+                (test.rule)(me)
+            );
+            t!(t!(File::create(td.path().join("Makefile"))).write_all(makefile.as_bytes()));
+            let prog = env::var("MAKE").unwrap_or("make".to_string());
+            let mut cmd = Command::new(prog);
+            cmd.args(test.make_args);
+            cmd.current_dir(td.path());
+            future::lazy(move || {
+                cmd.output_async().map(move |e| {
+                    drop(td);
+                    (test, e)
+                })
             })
         })
-    }).collect::<Vec<_>>();
+        .collect::<Vec<_>>();
 
     println!("\nrunning {} tests\n", futures.len());
 
-    let stream = stream::iter(futures.into_iter().map(Ok))
-        .buffer_unordered(num_cpus::get());
+    let stream = stream::iter(futures.into_iter().map(Ok)).buffer_unordered(num_cpus::get());
 
     let mut failures = Vec::new();
     t!(core.run(stream.for_each(|(test, output)| {
@@ -170,7 +176,7 @@ all:
 
     if failures.len() == 0 {
         println!("\ntest result: ok\n");
-        return
+        return;
     }
 
     println!("\n----------- failures");

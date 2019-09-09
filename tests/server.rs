@@ -5,19 +5,21 @@ use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 use jobserver::Client;
 use tempdir::TempDir;
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {}", stringify!($e), e),
+        }
+    };
 }
 
 #[test]
@@ -63,13 +65,15 @@ fn make_as_a_single_thread_client() {
     let mut cmd = Command::new(prog);
     cmd.current_dir(td.path());
 
-    t!(t!(File::create(td.path().join("Makefile"))).write_all(b"
+    t!(t!(File::create(td.path().join("Makefile"))).write_all(
+        b"
 all: foo bar
 foo:
 \techo foo
 bar:
 \techo bar
-"));
+"
+    ));
 
     // The jobserver protocol means that the `make` process itself "runs with a
     // token", so we acquire our one token to drain the jobserver, and this
@@ -77,10 +81,14 @@ bar:
     let _a = c.acquire();
     c.configure(&mut cmd);
     let output = t!(cmd.output());
-    println!("\n\t=== stderr\n\t\t{}",
-             String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t"));
-    println!("\t=== stdout\n\t\t{}",
-             String::from_utf8_lossy(&output.stdout).replace("\n", "\n\t\t"));
+    println!(
+        "\n\t=== stderr\n\t\t{}",
+        String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t")
+    );
+    println!(
+        "\t=== stdout\n\t\t{}",
+        String::from_utf8_lossy(&output.stdout).replace("\n", "\n\t\t")
+    );
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
@@ -111,22 +119,28 @@ fn make_as_a_multi_thread_client() {
     let mut cmd = Command::new(prog);
     cmd.current_dir(td.path());
 
-    t!(t!(File::create(td.path().join("Makefile"))).write_all(b"
+    t!(t!(File::create(td.path().join("Makefile"))).write_all(
+        b"
 all: foo bar
 foo:
 \techo foo
 bar:
 \techo bar
-"));
+"
+    ));
 
     // We're leaking one extra token to `make` sort of violating the makefile
     // jobserver protocol. It has the desired effect though.
     c.configure(&mut cmd);
     let output = t!(cmd.output());
-    println!("\n\t=== stderr\n\t\t{}",
-             String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t"));
-    println!("\t=== stdout\n\t\t{}",
-             String::from_utf8_lossy(&output.stdout).replace("\n", "\n\t\t"));
+    println!(
+        "\n\t=== stderr\n\t\t{}",
+        String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t")
+    );
+    println!(
+        "\t=== stdout\n\t\t{}",
+        String::from_utf8_lossy(&output.stdout).replace("\n", "\n\t\t")
+    );
 
     assert!(output.status.success());
 }
@@ -135,7 +149,9 @@ bar:
 fn zero_client() {
     let client = t!(Client::new(0));
     let (tx, rx) = mpsc::channel();
-    let helper = client.into_helper_thread(move |a| drop(tx.send(a))).unwrap();
+    let helper = client
+        .into_helper_thread(move |a| drop(tx.send(a)))
+        .unwrap();
     helper.request_token();
     helper.request_token();
 

@@ -1,8 +1,8 @@
 extern crate jobserver;
 
 use std::env;
-use std::io::BufReader;
 use std::io::prelude::*;
+use std::io::BufReader;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -10,10 +10,12 @@ use std::thread;
 use jobserver::Client;
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {}", stringify!($e), e),
+        }
+    };
 }
 
 fn main() {
@@ -28,8 +30,7 @@ fn server() {
     let me = t!(env::current_exe());
     let client = t!(Client::new(1));
     let mut cmd = Command::new(me);
-    cmd.env("I_AM_THE_CLIENT", "1")
-       .stdout(Stdio::piped());
+    cmd.env("I_AM_THE_CLIENT", "1").stdout(Stdio::piped());
     client.configure(&mut cmd);
     let acq = client.acquire().unwrap();
     let mut child = t!(cmd.spawn());

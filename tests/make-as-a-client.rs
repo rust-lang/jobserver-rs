@@ -4,17 +4,19 @@ extern crate tempdir;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
-use std::net::{TcpStream, TcpListener};
+use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 
 use jobserver::Client;
 use tempdir::TempDir;
 
 macro_rules! t {
-    ($e:expr) => (match $e {
-        Ok(e) => e,
-        Err(e) => panic!("{} failed with {}", stringify!($e), e),
-    })
+    ($e:expr) => {
+        match $e {
+            Ok(e) => e,
+            Err(e) => panic!("{} failed with {}", stringify!($e), e),
+        }
+    };
 }
 
 fn main() {
@@ -27,14 +29,14 @@ fn main() {
                 .status()
                 .unwrap()
                 .code()
-                .unwrap_or(1)
+                .unwrap_or(1),
         );
     }
 
     if let Ok(s) = env::var("TEST_ADDR") {
         let mut contents = Vec::new();
         t!(t!(TcpStream::connect(&s)).read_to_end(&mut contents));
-        return
+        return;
     }
 
     let c = t!(Client::new(1));
@@ -50,13 +52,19 @@ fn main() {
     cmd.env("MAKE", prog);
     cmd.env("_DO_THE_TEST", "1");
 
-    t!(t!(File::create(td.path().join("Makefile"))).write_all(format!("\
+    t!(t!(File::create(td.path().join("Makefile"))).write_all(
+        format!(
+            "\
 all: foo bar
 foo:
 \t{0}
 bar:
 \t{0}
-", me).as_bytes()));
+",
+            me
+        )
+        .as_bytes()
+    ));
 
     // We're leaking one extra token to `make` sort of violating the makefile
     // jobserver protocol. It has the desired effect though.

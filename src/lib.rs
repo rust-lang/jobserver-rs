@@ -81,8 +81,7 @@
 use std::env;
 use std::io;
 use std::process::Command;
-use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 /// A client of a jobserver
 ///
@@ -110,6 +109,19 @@ pub struct Client {
 pub struct Acquired {
     client: Arc<imp::Client>,
     data: imp::Acquired,
+}
+
+#[derive(Default, Debug)]
+struct HelperState {
+    lock: Mutex<HelperInner>,
+    cvar: Condvar,
+}
+
+#[derive(Default, Debug)]
+struct HelperInner {
+    requests: usize,
+    producer_done: bool,
+    consumer_done: bool,
 }
 
 impl Client {
@@ -229,7 +241,7 @@ impl Client {
     /// return immediately with the error. If an error is returned then a token
     /// was not acquired.
     pub fn acquire(&self) -> io::Result<Acquired> {
-        let data = try!(self.inner.acquire());
+        let data = self.inner.acquire()?;
         Ok(Acquired {
             client: self.inner.clone(),
             data: data,
@@ -344,10 +356,10 @@ impl Client {
     where
         F: FnMut(io::Result<Acquired>) + Send + 'static,
     {
-        let (tx, rx) = mpsc::channel();
+        let state = Arc::new(HelperState::default());
         Ok(HelperThread {
-            inner: Some(imp::spawn_helper(self, rx, Box::new(f))?),
-            tx: Some(tx),
+            inner: Some(imp::spawn_helper(self, state.clone(), Box::new(f))?),
+            state,
         })
     }
 
@@ -383,7 +395,7 @@ impl Drop for Acquired {
 #[derive(Debug)]
 pub struct HelperThread {
     inner: Option<imp::Helper>,
-    tx: Option<Sender<()>>,
+    state: Arc<HelperState>,
 }
 
 impl HelperThread {
@@ -392,14 +404,54 @@ impl HelperThread {
     ///
     /// For more information, see the docs on that function.
     pub fn request_token(&self) {
-        self.tx.as_ref().unwrap().send(()).unwrap();
+        // Indicate that there's one more request for a token and then wake up
+        // the helper thread if it's sleeping.
+        self.state.lock().requests += 1;
+        self.state.cvar.notify_one();
     }
 }
 
 impl Drop for HelperThread {
     fn drop(&mut self) {
-        drop(self.tx.take());
+        // Flag that the producer half is done so the helper thread should exit
+        // quickly if it's waiting. Wake it up if it's actually waiting
+        self.state.lock().producer_done = true;
+        self.state.cvar.notify_one();
+
+        // ... and afterwards perform any thread cleanup logic
         self.inner.take().unwrap().join();
+    }
+}
+
+impl HelperState {
+    fn lock(&self) -> MutexGuard<'_, HelperInner> {
+        self.lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn for_each_request(&self, mut f: impl FnMut()) {
+        let mut lock = self.lock();
+
+        // We only execute while we could receive requests, but as soon as
+        // that's `false` we're out of here.
+        while !lock.producer_done {
+            // If no one's requested a token then we wait for someone to
+            // request a token.
+            if lock.requests == 0 {
+                lock = self.cvar.wait(lock).unwrap_or_else(|e| e.into_inner());
+                continue;
+            }
+
+            // Consume the request for a token, and then actually acquire a
+            // token after unlocking our lock (not that acquisition happens in
+            // `f`). This ensures that we don't actually hold the lock if we
+            // wait for a long time for a token.
+            lock.requests -= 1;
+            drop(lock);
+            f();
+            lock = self.lock();
+        }
+        lock.consumer_done = true;
+        self.cvar.notify_one();
     }
 }
 
@@ -414,8 +466,7 @@ mod imp {
     use std::process::Command;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-    use std::sync::{Arc, Once, ONCE_INIT};
+    use std::sync::{Arc, Once};
     use std::thread::{self, Builder, JoinHandle};
     use std::time::Duration;
 
@@ -600,16 +651,15 @@ mod imp {
     #[derive(Debug)]
     pub struct Helper {
         thread: JoinHandle<()>,
-        quitting: Arc<AtomicBool>,
-        rx_done: Receiver<()>,
+        state: Arc<super::HelperState>,
     }
 
-    pub fn spawn_helper(
+    pub(crate) fn spawn_helper(
         client: ::Client,
-        rx: Receiver<()>,
+        state: Arc<super::HelperState>,
         mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
     ) -> io::Result<Helper> {
-        static USR1_INIT: Once = ONCE_INIT;
+        static USR1_INIT: Once = Once::new();
         let mut err = None;
         USR1_INIT.call_once(|| unsafe {
             let mut new: libc::sigaction = mem::zeroed();
@@ -624,42 +674,35 @@ mod imp {
             return Err(e);
         }
 
-        let quitting = Arc::new(AtomicBool::new(false));
-        let quitting2 = quitting.clone();
-        let (tx_done, rx_done) = mpsc::channel();
+        let state2 = state.clone();
         let thread = Builder::new().spawn(move || {
-            'outer: for () in rx {
-                loop {
-                    let res = client.acquire();
-                    if let Err(ref e) = res {
-                        if e.kind() == io::ErrorKind::Interrupted {
-                            if quitting2.load(Ordering::SeqCst) {
-                                break 'outer;
-                            } else {
-                                continue;
-                            }
-                        }
-                    }
-                    f(res);
-                    break;
-                }
-            }
-            tx_done.send(()).unwrap();
+            state2.for_each_request(|| f(client.acquire()));
         })?;
 
-        Ok(Helper {
-            thread: thread,
-            quitting: quitting,
-            rx_done: rx_done,
-        })
+        Ok(Helper { thread, state })
     }
 
     impl Helper {
         pub fn join(self) {
-            self.quitting.store(true, Ordering::SeqCst);
             let dur = Duration::from_millis(10);
-            let mut done = false;
+            let mut state = self.state.lock();
+            debug_assert!(state.producer_done);
+
+            // We need to join our helper thread, and it could be blocked in one
+            // of two locations. First is the wait for a request, but the
+            // initial drop of `HelperState` will take care of that. Otherwise
+            // it may be blocked in `client.acquire()`. We actually have no way
+            // of interrupting that, so resort to `pthread_kill` as a fallback.
+            // This signal should interrupt any blocking `read` call with
+            // `io::ErrorKind::Interrupt` and cause the thread to cleanly exit.
+            //
+            // Note that we don'tdo this forever though since there's a chance
+            // of bugs, so only do this opportunistically to make a best effort
+            // at clearing ourselves up.
             for _ in 0..100 {
+                if state.consumer_done {
+                    break;
+                }
                 unsafe {
                     // Ignore the return value here of `pthread_kill`,
                     // apparently on OSX if you kill a dead thread it will
@@ -667,17 +710,20 @@ mod imp {
                     // that sense we don't actually know if this will succeed or
                     // not!
                     libc::pthread_kill(self.thread.as_pthread_t() as _, libc::SIGUSR1);
-                    match self.rx_done.recv_timeout(dur) {
-                        Ok(()) | Err(RecvTimeoutError::Disconnected) => {
-                            done = true;
-                            break;
-                        }
-                        Err(RecvTimeoutError::Timeout) => {}
-                    }
                 }
-                thread::yield_now();
+                state = self
+                    .state
+                    .cvar
+                    .wait_timeout(state, dur)
+                    .unwrap_or_else(|e| e.into_inner())
+                    .0;
+                thread::yield_now(); // we really want the other thread to run
             }
-            if done {
+
+            // If we managed to actually see the consumer get done, then we can
+            // definitely wait for the thread. Otherwise it's... of in the ether
+            // I guess?
+            if state.consumer_done {
                 drop(self.thread.join());
             }
         }
@@ -729,7 +775,6 @@ mod imp {
     use std::io;
     use std::process::Command;
     use std::ptr;
-    use std::sync::mpsc::Receiver;
     use std::sync::Arc;
     use std::thread::{Builder, JoinHandle};
 
@@ -913,10 +958,10 @@ mod imp {
         thread: JoinHandle<()>,
     }
 
-    pub fn spawn_helper(
+    pub(crate) fn spawn_helper(
         client: ::Client,
-        rx: Receiver<()>,
-        mut f: Box<FnMut(io::Result<::Acquired>) + Send>,
+        state: Arc<super::HelperState>,
+        mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
     ) -> io::Result<Helper> {
         let event = unsafe {
             let r = CreateEventA(ptr::null_mut(), TRUE, FALSE, ptr::null());
@@ -930,29 +975,29 @@ mod imp {
         let event2 = event.clone();
         let thread = Builder::new().spawn(move || {
             let objects = [event2.0, client.inner.sem.0];
-            for () in rx {
-                let r = unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) };
-                if r == WAIT_OBJECT_0 {
-                    break;
-                }
-                if r == WAIT_OBJECT_0 + 1 {
-                    f(Ok(::Acquired {
+            state.for_each_request(|| {
+                const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
+                match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) } {
+                    WAIT_OBJECT_0 => return,
+                    WAIT_OBJECT_1 => f(Ok(::Acquired {
                         client: client.inner.clone(),
                         data: Acquired,
-                    }))
-                } else {
-                    f(Err(io::Error::last_os_error()))
+                    })),
+                    _ => f(Err(io::Error::last_os_error())),
                 }
-            }
+            });
         })?;
-        Ok(Helper {
-            thread: thread,
-            event: event,
-        })
+        Ok(Helper { thread, event })
     }
 
     impl Helper {
         pub fn join(self) {
+            // Unlike unix this logic is much easier. If our thread was blocked
+            // in waiting for requests it should already be woken up and
+            // exiting. Otherwise it's waiting for a token, so we wake it up
+            // with a different event that it's also waiting on here. After
+            // these two we should be guaranteed the thread is on its way out,
+            // so we can safely `join`.
             let r = unsafe { SetEvent(self.event.0) };
             if r == 0 {
                 panic!("failed to set event: {}", io::Error::last_os_error());
@@ -966,14 +1011,18 @@ mod imp {
 mod imp {
     use std::io;
     use std::process::Command;
-    use std::sync::mpsc::{self, Receiver, SyncSender};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Condvar, Mutex};
     use std::thread::{Builder, JoinHandle};
 
     #[derive(Debug)]
     pub struct Client {
-        tx: SyncSender<()>,
-        rx: Mutex<Receiver<()>>,
+        inner: Arc<Inner>,
+    }
+
+    #[derive(Debug)]
+    struct Inner {
+        count: Mutex<usize>,
+        cvar: Condvar,
     }
 
     #[derive(Debug)]
@@ -981,13 +1030,11 @@ mod imp {
 
     impl Client {
         pub fn new(limit: usize) -> io::Result<Client> {
-            let (tx, rx) = mpsc::sync_channel(limit);
-            for _ in 0..limit {
-                tx.send(()).unwrap();
-            }
             Ok(Client {
-                tx,
-                rx: Mutex::new(rx),
+                inner: Arc::new(Inner {
+                    count: Mutex::new(limit),
+                    cvar: Condvar::new(),
+                }),
             })
         }
 
@@ -996,12 +1043,23 @@ mod imp {
         }
 
         pub fn acquire(&self) -> io::Result<Acquired> {
-            self.rx.lock().unwrap().recv().unwrap();
+            let mut lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
+            while *lock == 0 {
+                lock = self
+                    .inner
+                    .cvar
+                    .wait(lock)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+            *lock -= 1;
             Ok(Acquired(()))
         }
 
         pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
-            self.tx.send(()).unwrap();
+            let mut lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
+            *lock += 1;
+            drop(lock);
+            self.inner.cvar.notify_one();
             Ok(())
         }
 
@@ -1022,16 +1080,13 @@ mod imp {
         thread: JoinHandle<()>,
     }
 
-    pub fn spawn_helper(
+    pub(crate) fn spawn_helper(
         client: ::Client,
-        rx: Receiver<()>,
-        mut f: Box<FnMut(io::Result<::Acquired>) + Send>,
+        state: Arc<super::HelperState>,
+        mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
     ) -> io::Result<Helper> {
         let thread = Builder::new().spawn(move || {
-            for () in rx {
-                let res = client.acquire();
-                f(res);
-            }
+            state.for_each_request(|| f(client.acquire()));
         })?;
 
         Ok(Helper { thread: thread })
@@ -1039,6 +1094,8 @@ mod imp {
 
     impl Helper {
         pub fn join(self) {
+            // TODO: this is not correct if the thread is blocked in
+            // `client.acquire()`.
             drop(self.thread.join());
         }
     }

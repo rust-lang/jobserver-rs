@@ -232,7 +232,7 @@ impl Client {
     /// return immediately with the error. If an error is returned then a token
     /// was not acquired.
     pub fn acquire(&self) -> io::Result<Acquired> {
-        let data = try!(self.inner.acquire());
+        let data = self.inner.acquire()?;
         Ok(Acquired {
             client: self.inner.clone(),
             data: data,
@@ -418,7 +418,7 @@ mod imp {
     use std::ptr;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-    use std::sync::{Arc, Once, ONCE_INIT};
+    use std::sync::{Arc, Once};
     use std::thread::{self, Builder, JoinHandle};
     use std::time::Duration;
 
@@ -593,11 +593,13 @@ mod imp {
             // integers through `string_arg` above.
             let read = self.read.as_raw_fd();
             let write = self.write.as_raw_fd();
-            cmd.before_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
-                Ok(())
-            });
+            unsafe {
+                cmd.pre_exec(move || {
+                    set_cloexec(read, false)?;
+                    set_cloexec(write, false)?;
+                    Ok(())
+                });
+            }
         }
     }
 
@@ -611,9 +613,9 @@ mod imp {
     pub fn spawn_helper(
         client: ::Client,
         rx: Receiver<()>,
-        mut f: Box<FnMut(io::Result<::Acquired>) + Send>,
+        mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
     ) -> io::Result<Helper> {
-        static USR1_INIT: Once = ONCE_INIT;
+        static USR1_INIT: Once = Once::new();
         let mut err = None;
         USR1_INIT.call_once(|| unsafe {
             let mut new: libc::sigaction = mem::zeroed();

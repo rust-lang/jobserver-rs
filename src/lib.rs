@@ -769,8 +769,6 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    extern crate getrandom;
-
     use std::ffi::CString;
     use std::io;
     use std::process::Command;
@@ -832,6 +830,24 @@ mod imp {
             lpName: *const i8,
         ) -> HANDLE;
         fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+        #[link_name = "SystemFunction036"]
+        fn RtlGenRandom(RandomBuffer: *mut u8, RandomBufferLength: u32) -> u8;
+    }
+
+    // Note that we ideally would use the `getrandom` crate, but unfortunately
+    // that causes build issues when this crate is used in rust-lang/rust (see
+    // rust-lang/rust#65014 for more information). As a result we just inline
+    // the pretty simple Windows-specific implementation of generating
+    // randomness.
+    fn getrandom(dest: &mut [u8]) -> io::Result<()> {
+        // Prevent overflow of u32
+        for chunk in dest.chunks_mut(u32::max_value() as usize) {
+            let ret = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
+            if ret == 0 {
+                return Err(io::Error::new(io::ErrorKind::Other, "failed to generate random bytes"));
+            }
+        }
+        Ok(())
     }
 
     impl Client {
@@ -846,12 +862,7 @@ mod imp {
             // back).
             for _ in 0..100 {
                 let mut bytes = [0; 4];
-                getrandom::getrandom(&mut bytes).map_err(|e| {
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("failed to get random bytes: {}", e),
-                    )
-                })?;
+                getrandom(&mut bytes)?;
                 let mut name =
                     format!("__rust_jobserver_semaphore_{}\0", u32::from_ne_bytes(bytes));
                 unsafe {

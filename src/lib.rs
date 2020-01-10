@@ -111,6 +111,15 @@ pub struct Acquired {
     data: imp::Acquired,
 }
 
+impl Acquired {
+    /// Return the underlying acquired data from the jobserver.
+    ///
+    /// Implementation varies by platform.
+    pub fn data(&self) -> imp::Acquired {
+        self.data
+    }
+}
+
 #[derive(Default, Debug)]
 struct HelperState {
     lock: Mutex<HelperInner>,
@@ -151,6 +160,36 @@ impl Client {
     pub fn new(limit: usize) -> io::Result<Client> {
         Ok(Client {
             inner: Arc::new(imp::Client::new(limit)?),
+        })
+    }
+
+    /// Same as `Client::new`, but tokens are guaranteed to have unique values.
+    ///
+    /// The data can be accessed after acquisition, and used as a
+    /// synchronisation primitive:
+    ///
+    /// ```
+    /// use jobserver::Client;
+    ///
+    /// let client = Client::new_with_unique(2).expect("failed to create jobserver");
+    /// let token_a = client.acquire().unwrap();
+    /// let token_b = client.acquire().unwrap();
+    ///
+    /// // Each token has a unique byte.
+    /// assert_eq!(token_a.data().byte(), 0);
+    /// assert_eq!(token_b.data().byte(), 1);
+    ///
+    /// // A token's value will only be repeated once it has been released.
+    /// drop(token_b);
+    /// let token_c = client.acquire().unwrap();
+    /// assert_eq!(token_c.data().byte(), 1);
+    /// ```
+    ///
+    /// Only available on `unix` platforms.
+    #[cfg(unix)]
+    pub fn new_with_unique(limit: u8) -> io::Result<Client> {
+        Ok(Client {
+            inner: Arc::new(imp::Client::new_with_unique(limit)?),
         })
     }
 
@@ -478,9 +517,16 @@ mod imp {
         write: File,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone, Copy)]
     pub struct Acquired {
         byte: u8,
+    }
+
+    impl Acquired {
+        /// Return the byte acquired from the jobserver.
+        pub fn byte(&self) -> u8 {
+            self.byte
+        }
     }
 
     impl Client {
@@ -490,6 +536,19 @@ mod imp {
             // wrong!
             for _ in 0..limit {
                 (&client.write).write(&[b'|'])?;
+            }
+            Ok(client)
+        }
+
+        pub fn new_with_unique(limit: u8) -> io::Result<Client> {
+            let client = unsafe { Client::mk()? };
+            // The jobserver specification states that the bytes written doesn't
+            // matter.
+            //
+            // We can share information by uniquely id'ing the tokens, although
+            // this limits how many tokens we can have on the server.
+            for data in 0..limit {
+                (&client.write).write(&[data])?;
             }
             Ok(client)
         }

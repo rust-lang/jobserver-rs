@@ -591,7 +591,11 @@ mod imp {
                 loop {
                     fd.revents = 0;
                     if libc::poll(&mut fd, 1, -1) == -1 {
-                        return Err(io::Error::last_os_error());
+                        let e = io::Error::last_os_error();
+                        match e.kind() {
+                            io::ErrorKind::Interrupted => continue,
+                            _ => return Err(e),
+                        }
                     }
                     if fd.revents == 0 {
                         continue;
@@ -605,8 +609,10 @@ mod imp {
                                 "early EOF on jobserver pipe",
                             ))
                         }
-                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                        Err(e) => return Err(e),
+                        Err(e) => match e.kind() {
+                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted => continue,
+                            _ => return Err(e),
+                        },
                     }
                 }
             }

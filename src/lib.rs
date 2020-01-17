@@ -117,6 +117,9 @@ impl Acquired {
     ///
     /// This is not generally useful, but can be helpful if you do not have the
     /// ability to store an Acquired token but need to not yet release it.
+    ///
+    /// You'll typically want to follow this up with a call to `release_raw` or
+    /// similar to actually release the token later on.
     pub fn drop_without_releasing(mut self) {
         self.disabled = true;
     }

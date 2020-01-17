@@ -109,6 +109,17 @@ pub struct Client {
 pub struct Acquired {
     client: Arc<imp::Client>,
     data: imp::Acquired,
+    disabled: bool,
+}
+
+impl Acquired {
+    /// This drops the `Acquired` token without releasing the associated token.
+    ///
+    /// This is not generally useful, but can be helpful if you do not have the
+    /// ability to store an Acquired token but need to not yet release it.
+    pub fn drop_without_releasing(mut self) {
+        self.disabled = true;
+    }
 }
 
 #[derive(Default, Debug)]
@@ -245,6 +256,7 @@ impl Client {
         Ok(Acquired {
             client: self.inner.clone(),
             data: data,
+            disabled: false,
         })
     }
 
@@ -386,7 +398,9 @@ impl Client {
 
 impl Drop for Acquired {
     fn drop(&mut self) {
-        drop(self.client.release(Some(&self.data)));
+        if !self.disabled {
+            drop(self.client.release(Some(&self.data)));
+        }
     }
 }
 
@@ -1002,6 +1016,7 @@ mod imp {
                     WAIT_OBJECT_1 => f(Ok(::Acquired {
                         client: client.inner.clone(),
                         data: Acquired,
+                        disabled: false,
                     })),
                     _ => f(Err(io::Error::last_os_error())),
                 }

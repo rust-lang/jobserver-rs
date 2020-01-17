@@ -80,6 +80,7 @@
 
 use std::env;
 use std::io;
+use std::panic;
 use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
@@ -447,7 +448,16 @@ impl HelperState {
             // wait for a long time for a token.
             lock.requests -= 1;
             drop(lock);
-            f();
+
+            // Run `f`, but mark ourself as done if it panics.
+            if let Err(panic) = panic::catch_unwind(panic::AssertUnwindSafe(|| f())) {
+                let mut lock = self.lock();
+                lock.consumer_done = true;
+                self.cvar.notify_one();
+                drop(lock);
+                panic::resume_unwind(panic);
+            }
+
             lock = self.lock();
         }
         lock.consumer_done = true;
@@ -701,14 +711,7 @@ mod imp {
             // of interrupting that, so resort to `pthread_kill` as a fallback.
             // This signal should interrupt any blocking `read` call with
             // `io::ErrorKind::Interrupt` and cause the thread to cleanly exit.
-            //
-            // Note that we don'tdo this forever though since there's a chance
-            // of bugs, so only do this opportunistically to make a best effort
-            // at clearing ourselves up.
-            for _ in 0..100 {
-                if state.consumer_done {
-                    break;
-                }
+            while !state.consumer_done {
                 unsafe {
                     // Ignore the return value here of `pthread_kill`,
                     // apparently on OSX if you kill a dead thread it will

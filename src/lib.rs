@@ -482,7 +482,6 @@ mod imp {
     use std::os::unix::prelude::*;
     use std::process::Command;
     use std::ptr;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Once};
     use std::thread::{self, Builder, JoinHandle};
     use std::time::Duration;
@@ -678,9 +677,9 @@ mod imp {
     }
 
     pub(crate) fn spawn_helper(
-        client: ::Client,
+        client: crate::Client,
         state: Arc<super::HelperState>,
-        mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
+        mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
     ) -> io::Result<Helper> {
         static USR1_INIT: Once = Once::new();
         let mut err = None;
@@ -996,9 +995,9 @@ mod imp {
     }
 
     pub(crate) fn spawn_helper(
-        client: ::Client,
+        client: crate::Client,
         state: Arc<super::HelperState>,
-        mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
+        mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
     ) -> io::Result<Helper> {
         let event = unsafe {
             let r = CreateEventA(ptr::null_mut(), TRUE, FALSE, ptr::null());
@@ -1016,7 +1015,7 @@ mod imp {
                 const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
                 match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) } {
                     WAIT_OBJECT_0 => return,
-                    WAIT_OBJECT_1 => f(Ok(::Acquired {
+                    WAIT_OBJECT_1 => f(Ok(crate::Acquired {
                         client: client.inner.clone(),
                         data: Acquired,
                         disabled: false,
@@ -1119,9 +1118,9 @@ mod imp {
     }
 
     pub(crate) fn spawn_helper(
-        client: ::Client,
+        client: crate::Client,
         state: Arc<super::HelperState>,
-        mut f: Box<dyn FnMut(io::Result<::Acquired>) + Send>,
+        mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
     ) -> io::Result<Helper> {
         let thread = Builder::new().spawn(move || {
             state.for_each_request(|| f(client.acquire()));

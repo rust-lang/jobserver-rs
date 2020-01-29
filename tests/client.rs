@@ -32,9 +32,9 @@ macro_rules! t {
 
 struct Test {
     name: &'static str,
-    f: &'static Fn(),
+    f: &'static dyn Fn(),
     make_args: &'static [&'static str],
-    rule: &'static Fn(&str) -> String,
+    rule: &'static dyn Fn(&str) -> String,
 }
 
 const TESTS: &[Test] = &[

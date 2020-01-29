@@ -1,3 +1,4 @@
+use libc::c_int;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
@@ -7,7 +8,6 @@ use std::ptr;
 use std::sync::{Arc, Once};
 use std::thread::{self, Builder, JoinHandle};
 use std::time::Duration;
-use libc::c_int;
 
 #[derive(Debug)]
 pub struct Client {
@@ -102,6 +102,17 @@ impl Client {
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {
+        // Ignore interrupts and keep trying if that happens
+        loop {
+            if let Some(token) = self.acquire_allow_interrupts()? {
+                return Ok(token);
+            }
+        }
+    }
+
+    /// Block waiting for a token, returning `None` if we're interrupted with
+    /// EINTR.
+    fn acquire_allow_interrupts(&self) -> io::Result<Option<Acquired>> {
         // We don't actually know if the file descriptor here is set in
         // blocking or nonblocking mode. AFAIK all released versions of
         // `make` use blocking fds for the jobserver, but the unreleased
@@ -130,7 +141,7 @@ impl Client {
                 if libc::poll(&mut fd, 1, -1) == -1 {
                     let e = io::Error::last_os_error();
                     match e.kind() {
-                        io::ErrorKind::Interrupted => continue,
+                        io::ErrorKind::Interrupted => return Ok(None),
                         _ => return Err(e),
                     }
                 }
@@ -139,7 +150,7 @@ impl Client {
                 }
                 let mut buf = [0];
                 match (&self.read).read(&mut buf) {
-                    Ok(1) => return Ok(Acquired { byte: buf[0] }),
+                    Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
                     Ok(_) => {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
@@ -147,7 +158,7 @@ impl Client {
                         ))
                     }
                     Err(e) => match e.kind() {
-                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted => continue,
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted => return Ok(None),
                         _ => return Err(e),
                     },
                 }
@@ -219,7 +230,20 @@ pub(crate) fn spawn_helper(
 
     let state2 = state.clone();
     let thread = Builder::new().spawn(move || {
-        state2.for_each_request(|| f(client.acquire()));
+        state2.for_each_request(|helper| loop {
+            match client.inner.acquire_allow_interrupts() {
+                Ok(Some(data)) => {
+                    break f(Ok(crate::Acquired {
+                        client: client.inner.clone(),
+                        data,
+                        disabled: false,
+                    }))
+                }
+                Err(e) => break f(Err(e)),
+                Ok(None) if helper.producer_done() => break,
+                Ok(None) => {}
+            }
+        });
     })?;
 
     Ok(Helper { thread, state })
@@ -239,7 +263,7 @@ impl Helper {
         // This signal should interrupt any blocking `read` call with
         // `io::ErrorKind::Interrupt` and cause the thread to cleanly exit.
         //
-        // Note that we don'tdo this forever though since there's a chance
+        // Note that we don't do this forever though since there's a chance
         // of bugs, so only do this opportunistically to make a best effort
         // at clearing ourselves up.
         for _ in 0..100 {
@@ -264,7 +288,7 @@ impl Helper {
         }
 
         // If we managed to actually see the consumer get done, then we can
-        // definitely wait for the thread. Otherwise it's... of in the ether
+        // definitely wait for the thread. Otherwise it's... off in the ether
         // I guess?
         if state.consumer_done {
             drop(self.thread.join());

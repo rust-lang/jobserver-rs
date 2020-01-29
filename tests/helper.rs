@@ -1,8 +1,7 @@
-extern crate jobserver;
-
-use std::sync::mpsc;
-
 use jobserver::Client;
+use std::sync::atomic::*;
+use std::sync::mpsc;
+use std::sync::*;
 
 macro_rules! t {
     ($e:expr) => {
@@ -45,4 +44,34 @@ fn acquire() {
     helper.request_token();
     helper.request_token();
     drop(helper);
+}
+
+#[test]
+fn prompt_shutdown() {
+    for _ in 0..100 {
+        let client = jobserver::Client::new(4).unwrap();
+        let count = Arc::new(AtomicU32::new(0));
+        let count2 = count.clone();
+        let tokens = Arc::new(Mutex::new(Vec::new()));
+        let helper = client
+            .into_helper_thread(move |token| {
+                tokens.lock().unwrap().push(token);
+                count2.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap();
+
+        // Request more tokens than what are available.
+        for _ in 0..5 {
+            helper.request_token();
+        }
+        // Wait for at least some of the requests to finish.
+        while count.load(Ordering::SeqCst) < 3 {
+            std::thread::yield_now();
+        }
+        // Drop helper
+        let t = std::time::Instant::now();
+        drop(helper);
+        let d = t.elapsed();
+        assert!(d.as_secs_f64() < 0.5);
+    }
 }

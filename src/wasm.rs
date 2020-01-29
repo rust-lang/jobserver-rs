@@ -1,4 +1,3 @@
-
 use std::io;
 use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex};
@@ -76,7 +75,7 @@ pub(crate) fn spawn_helper(
     mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
 ) -> io::Result<Helper> {
     let thread = Builder::new().spawn(move || {
-        state.for_each_request(|| f(client.acquire()));
+        state.for_each_request(|_| f(client.acquire()));
     })?;
 
     Ok(Helper { thread: thread })

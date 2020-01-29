@@ -53,11 +53,7 @@ extern "system" {
         lMaximumCount: LONG,
         lpName: *const i8,
     ) -> HANDLE;
-    fn OpenSemaphoreA(
-        dwDesiredAccess: DWORD,
-        bInheritHandle: BOOL,
-        lpName: *const i8,
-    ) -> HANDLE;
+    fn OpenSemaphoreA(dwDesiredAccess: DWORD, bInheritHandle: BOOL, lpName: *const i8) -> HANDLE;
     fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
     #[link_name = "SystemFunction036"]
     fn RtlGenRandom(RandomBuffer: *mut u8, RandomBufferLength: u32) -> u8;
@@ -95,8 +91,7 @@ impl Client {
         for _ in 0..100 {
             let mut bytes = [0; 4];
             getrandom(&mut bytes)?;
-            let mut name =
-                format!("__rust_jobserver_semaphore_{}\0", u32::from_ne_bytes(bytes));
+            let mut name = format!("__rust_jobserver_semaphore_{}\0", u32::from_ne_bytes(bytes));
             unsafe {
                 let create_limit = if limit == 0 { 1 } else { limit };
                 let r = CreateSemaphoreA(
@@ -218,7 +213,7 @@ pub(crate) fn spawn_helper(
     let event2 = event.clone();
     let thread = Builder::new().spawn(move || {
         let objects = [event2.0, client.inner.sem.0];
-        state.for_each_request(|| {
+        state.for_each_request(|_| {
             const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
             match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) } {
                 WAIT_OBJECT_0 => return,

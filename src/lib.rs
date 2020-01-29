@@ -458,7 +458,13 @@ impl HelperState {
         self.lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn for_each_request(&self, mut f: impl FnMut()) {
+    /// Executes `f` for each request for a token, where `f` is expected to
+    /// block and then provide the original closure with a token once it's
+    /// acquired.
+    ///
+    /// This is an infinite loop until the helper thread is dropped, at which
+    /// point everything should get interrupted.
+    fn for_each_request(&self, mut f: impl FnMut(&HelperState)) {
         let mut lock = self.lock();
 
         // We only execute while we could receive requests, but as soon as
@@ -477,11 +483,15 @@ impl HelperState {
             // wait for a long time for a token.
             lock.requests -= 1;
             drop(lock);
-            f();
+            f(self);
             lock = self.lock();
         }
         lock.consumer_done = true;
         self.cvar.notify_one();
+    }
+
+    fn producer_done(&self) -> bool {
+        self.lock().producer_done
     }
 }
 

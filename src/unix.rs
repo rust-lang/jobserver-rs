@@ -39,7 +39,7 @@ impl Client {
         // with as many kernels/glibc implementations as possible.
         #[cfg(target_os = "linux")]
         {
-            use std::sync::{AtomicBool, Ordering};
+            use std::sync::atomic::{AtomicBool, Ordering};
 
             static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
             if PIPE2_AVAILABLE.load(Ordering::SeqCst) {

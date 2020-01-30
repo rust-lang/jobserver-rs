@@ -11,9 +11,6 @@ An implementation of the GNU make jobserver for Rust
 """
 edition = "2018"
 
-[dependencies]
-cfg-if = "0.1.10"
-
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.50"
 

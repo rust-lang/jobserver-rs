@@ -83,18 +83,15 @@ use std::io;
 use std::process::Command;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-cfg_if::cfg_if! {
-    if #[cfg(unix)] {
-        mod unix;
-        use unix as imp;
-    } else if #[cfg(windows)] {
-        mod windows;
-        use windows as imp;
-    } else {
-        mod wasm;
-        use wasm as imp;
-    }
-}
+#[cfg(unix)]
+#[path = "unix.rs"]
+mod imp;
+#[cfg(windows)]
+#[path = "windows.rs"]
+mod imp;
+#[cfg(not(any(unix, windows)))]
+#[path = "wasm.rs"]
+mod imp;
 
 /// A client of a jobserver
 ///

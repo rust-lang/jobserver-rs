@@ -184,7 +184,7 @@ impl Client {
     }
 
     pub fn string_arg(&self) -> String {
-        format!("{},{} -j", self.read.as_raw_fd(), self.write.as_raw_fd())
+        format!("{},{}", self.read.as_raw_fd(), self.write.as_raw_fd())
     }
 
     pub fn configure(&self, cmd: &mut Command) {

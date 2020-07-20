@@ -294,7 +294,7 @@ impl Client {
         // Older implementations of make use `--jobserver-fds` and newer
         // implementations use `--jobserver-auth`, pass both to try to catch
         // both implementations.
-        let value = format!("--jobserver-fds={0} --jobserver-auth={0}", arg);
+        let value = format!("-j --jobserver-fds={0} --jobserver-auth={0}", arg);
         cmd.env("CARGO_MAKEFLAGS", &value);
         self.inner.configure(cmd);
     }

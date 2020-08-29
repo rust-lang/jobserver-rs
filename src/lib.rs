@@ -226,8 +226,8 @@ impl Client {
     /// any number of times.
     pub unsafe fn from_env() -> Option<Client> {
         let var = match env::var("CARGO_MAKEFLAGS")
-            .or(env::var("MAKEFLAGS"))
-            .or(env::var("MFLAGS"))
+            .or_else(|_| env::var("MAKEFLAGS"))
+            .or_else(|_| env::var("MFLAGS"))
         {
             Ok(s) => s,
             Err(_) => return None,
@@ -268,7 +268,7 @@ impl Client {
         let data = self.inner.acquire()?;
         Ok(Acquired {
             client: self.inner.clone(),
-            data: data,
+            data,
             disabled: false,
         })
     }

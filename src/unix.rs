@@ -26,7 +26,7 @@ impl Client {
         // I don't think the character written here matters, but I could be
         // wrong!
         for _ in 0..limit {
-            (&client.write).write(&[b'|'])?;
+            (&client.write).write_all(&[b'|'])?;
         }
         Ok(client)
     }
@@ -299,9 +299,7 @@ impl Helper {
 }
 
 fn is_valid_fd(fd: c_int) -> bool {
-    unsafe {
-        return libc::fcntl(fd, libc::F_GETFD) != -1;
-    }
+    unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
 }
 
 fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {

@@ -1,10 +1,3 @@
-extern crate futures;
-extern crate jobserver;
-extern crate num_cpus;
-extern crate tempdir;
-extern crate tokio_core;
-extern crate tokio_process;
-
 use std::env;
 use std::fs::File;
 use std::io::Write;

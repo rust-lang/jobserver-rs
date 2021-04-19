@@ -122,10 +122,11 @@ impl Client {
         // fds are set to nonblocking and combined with `pselect`
         // internally.
         //
-        // Here we try to be compatible with both strategies. We
-        // unconditionally expect the file descriptor to be in nonblocking
-        // mode and if it happens to be in blocking mode then most of this
-        // won't end up actually being necessary!
+        // Here we try to be compatible with both strategies. We optimistically
+        // try to read from the file descriptor which then may block, return
+        // a token or indicate that polling is needed.
+        // Blocking reads (if possible) allows the kernel to be more selective
+        // about which readers to wake up when a token is written to the pipe.
         //
         // We use `poll` here to block this thread waiting for read
         // readiness, and then afterwards we perform the `read` itself. If
@@ -139,17 +140,6 @@ impl Client {
             fd.fd = self.read.as_raw_fd();
             fd.events = libc::POLLIN;
             loop {
-                fd.revents = 0;
-                if libc::poll(&mut fd, 1, -1) == -1 {
-                    let e = io::Error::last_os_error();
-                    match e.kind() {
-                        io::ErrorKind::Interrupted => return Ok(None),
-                        _ => return Err(e),
-                    }
-                }
-                if fd.revents == 0 {
-                    continue;
-                }
                 let mut buf = [0];
                 match (&self.read).read(&mut buf) {
                     Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
@@ -160,9 +150,24 @@ impl Client {
                         ))
                     }
                     Err(e) => match e.kind() {
-                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted => return Ok(None),
+                        io::ErrorKind::WouldBlock => { /* fall through to polling */ }
+                        io::ErrorKind::Interrupted => return Ok(None),
                         _ => return Err(e),
                     },
+                }
+
+                loop {
+                    fd.revents = 0;
+                    if libc::poll(&mut fd, 1, -1) == -1 {
+                        let e = io::Error::last_os_error();
+                        return match e.kind() {
+                            io::ErrorKind::Interrupted => Ok(None),
+                            _ => Err(e),
+                        };
+                    }
+                    if fd.revents != 0 {
+                        break;
+                    }
                 }
             }
         }

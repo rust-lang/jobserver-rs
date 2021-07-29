@@ -156,3 +156,25 @@ fn zero_client() {
         assert!(rx.try_recv().is_err());
     }
 }
+
+#[test]
+fn highly_concurrent() {
+    const N: usize = 10000;
+
+    let client = t!(Client::new(80));
+
+    let threads = (0..80)
+        .map(|_| {
+            let client = client.clone();
+            std::thread::spawn(move || {
+                for _ in 0..N {
+                    drop(client.acquire().unwrap());
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for t in threads {
+        t.join().unwrap();
+    }
+}

@@ -8,7 +8,6 @@ use std::sync::Arc;
 use std::thread;
 
 use jobserver::Client;
-use tempdir::TempDir;
 
 macro_rules! t {
     ($e:expr) => {
@@ -56,7 +55,7 @@ fn server_blocks() {
 #[test]
 fn make_as_a_single_thread_client() {
     let c = t!(Client::new(1));
-    let td = TempDir::new("foo").unwrap();
+    let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
     let mut cmd = Command::new(prog);
@@ -110,7 +109,7 @@ foo
 #[test]
 fn make_as_a_multi_thread_client() {
     let c = t!(Client::new(1));
-    let td = TempDir::new("foo").unwrap();
+    let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
     let mut cmd = Command::new(prog);

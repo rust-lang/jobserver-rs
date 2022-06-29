@@ -25,9 +25,8 @@ impl Client {
         let client = unsafe { Client::mk()? };
         // I don't think the character written here matters, but I could be
         // wrong!
-        for _ in 0..limit {
-            (&client.write).write_all(&[b'|'])?;
-        }
+        let v: Vec<u8> = vec![b'|'; limit];
+        (&client.write).write_all(&v)?;
         Ok(client)
     }
 

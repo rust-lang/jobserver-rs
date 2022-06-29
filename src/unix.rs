@@ -23,10 +23,20 @@ pub struct Acquired {
 impl Client {
     pub fn new(limit: usize) -> io::Result<Client> {
         let client = unsafe { Client::mk()? };
+
         // I don't think the character written here matters, but I could be
         // wrong!
-        let v: Vec<u8> = vec![b'|'; limit];
-        (&client.write).write_all(&v)?;
+        //
+        // Also, it is highly unlikely to have a machine with more than
+        // 128 cores.
+        const BUFFER: [u8; 128] = [b'|'; 128];
+
+        if BUFFER.len() <= limit {
+            (&client.write).write_all(&BUFFER[..limit])?;
+        } else {
+            (&client.write).write_all(&vec![b'|'; limit])?;
+        }
+
         Ok(client)
     }
 

@@ -35,13 +35,11 @@ impl Client {
         // 128 cores.
         const BUFFER: [u8; 128] = [b'|'; 128];
 
-        while limit >= BUFFER.len() {
-            (&client.write).write_all(&BUFFER)?;
-            limit -= BUFFER.len();
-        }
+        while limit > 0 {
+            let n = limit.min(BUFFER.len());
 
-        if limit > 0 {
-            (&client.write).write_all(&BUFFER[..limit])?;
+            (&client.write).write_all(&BUFFER[..n])?;
+            limit -= n;
         }
 
         Ok(client)

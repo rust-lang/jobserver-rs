@@ -21,7 +21,7 @@ pub struct Acquired {
 }
 
 impl Client {
-    pub fn new(limit: usize) -> io::Result<Client> {
+    pub fn new(mut limit: usize) -> io::Result<Client> {
         let client = unsafe { Client::mk()? };
 
         // I don't think the character written here matters, but I could be
@@ -31,10 +31,13 @@ impl Client {
         // 128 cores.
         const BUFFER: [u8; 128] = [b'|'; 128];
 
-        if BUFFER.len() <= limit {
+        while limit >= BUFFER.len() {
+            (&client.write).write_all(&BUFFER)?;
+            limit -= BUFFER.len();
+        }
+
+        if limit > 0 {
             (&client.write).write_all(&BUFFER[..limit])?;
-        } else {
-            (&client.write).write_all(&vec![b'|'; limit])?;
         }
 
         Ok(client)

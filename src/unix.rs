@@ -22,6 +22,8 @@ pub struct Acquired {
 
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
+        assert!(limit <= 4096, "Can't have limit larger than 4096 since the pipe would block forever when writing to it");
+
         let client = unsafe { Client::mk()? };
 
         // I don't think the character written here matters, but I could be

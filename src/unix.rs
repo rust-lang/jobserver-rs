@@ -30,9 +30,6 @@ impl Client {
 
         // I don't think the character written here matters, but I could be
         // wrong!
-        //
-        // Also, it is highly unlikely to have a machine with more than
-        // 128 cores.
         const BUFFER: [u8; 128] = [b'|'; 128];
 
         while limit > 0 {

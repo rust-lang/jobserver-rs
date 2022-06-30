@@ -1,4 +1,5 @@
-use libc::c_int;
+use libc::{c_int, PIPE_BUF};
+
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
@@ -22,7 +23,7 @@ pub struct Acquired {
 
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
-        if limit > 4096 {
+        if limit > PIPE_BUF {
             return Err(io::Error::new(io::ErrorKind::Other,  "Can't have limit larger than 4096 since the pipe would block forever when writing to it"));
         }
 

@@ -208,7 +208,7 @@ impl Client {
     /// with `CLOEXEC` so they're not automatically inherited by spawned
     /// children.
     ///
-    /// # Unsafety
+    /// # Safety
     ///
     /// This function is `unsafe` to call on Unix specifically as it
     /// transitively requires usage of the `from_raw_fd` function, which is

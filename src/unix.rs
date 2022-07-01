@@ -1,4 +1,4 @@
-use libc::{c_int, PIPE_BUF};
+use libc::c_int;
 
 use std::fs::File;
 use std::io::{self, Read, Write};

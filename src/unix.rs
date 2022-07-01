@@ -40,6 +40,8 @@ impl Client {
             limit -= n;
         }
 
+        set_nonblocking(client.write.as_raw_fd(), false)?;
+
         Ok(client)
     }
 
@@ -64,7 +66,10 @@ impl Client {
                             return Err(err);
                         }
                     }
-                    _ => return Ok(Client::from_fds(pipes[0], pipes[1])),
+                    _ => {
+                        set_nonblocking(pipes[1], true)?;
+                        return Ok(Client::from_fds(pipes[0], pipes[1]));
+                    }
                 }
             }
         }
@@ -72,6 +77,9 @@ impl Client {
         cvt(libc::pipe(pipes.as_mut_ptr()))?;
         drop(set_cloexec(pipes[0], true));
         drop(set_cloexec(pipes[1], true));
+
+        set_nonblocking(pipes[1], true)?;
+
         Ok(Client::from_fds(pipes[0], pipes[1]))
     }
 
@@ -332,6 +340,16 @@ fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {
         }
         Ok(())
     }
+}
+
+fn set_nonblocking(fd: c_int, set: bool) -> io::Result<()> {
+    let status_flag = if set { libc::O_NONBLOCK } else { 0 };
+
+    unsafe {
+        cvt(libc::fcntl(fd, libc::F_SETFL, status_flag))?;
+    }
+
+    Ok(())
 }
 
 fn cvt(t: c_int) -> io::Result<c_int> {

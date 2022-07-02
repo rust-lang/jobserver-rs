@@ -29,6 +29,8 @@ impl Client {
         // wrong!
         const BUFFER: [u8; 128] = [b'|'; 128];
 
+        set_nonblocking(client.write.as_raw_fd(), true)?;
+
         while limit > 0 {
             let n = limit.min(BUFFER.len());
 
@@ -63,7 +65,6 @@ impl Client {
                         }
                     }
                     _ => {
-                        set_nonblocking(pipes[1], true)?;
                         return Ok(Client::from_fds(pipes[0], pipes[1]));
                     }
                 }
@@ -73,9 +74,6 @@ impl Client {
         cvt(libc::pipe(pipes.as_mut_ptr()))?;
         drop(set_cloexec(pipes[0], true));
         drop(set_cloexec(pipes[1], true));
-
-        set_nonblocking(pipes[1], true)?;
-
         Ok(Client::from_fds(pipes[0], pipes[1]))
     }
 

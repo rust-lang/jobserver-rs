@@ -64,9 +64,7 @@ impl Client {
                             return Err(err);
                         }
                     }
-                    _ => {
-                        return Ok(Client::from_fds(pipes[0], pipes[1]));
-                    }
+                    _ => return Ok(Client::from_fds(pipes[0], pipes[1])),
                 }
             }
         }

@@ -221,6 +221,14 @@ impl Client {
         let f = move || {
             // Increment strong count to ensure that it is leaked.
             //
+            // Basically, Arc uses reference counting to keep track of the
+            // references and it is dropped when the reference counting
+            // reaches 0.
+            //
+            // Using Arc::increment_strong_count increment the reference
+            // counting by 1 without creating an Arc, thus prevents the
+            // reference counting from ever reaching 0 and being dropped.
+            //
             // Safety:
             //
             // p.0 is a pointer obtained through Arc::into_raw

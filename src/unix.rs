@@ -205,26 +205,31 @@ impl Client {
     }
 
     pub fn configure(self: &Arc<Self>, cmd: &mut Command) {
-        // Since this process will call exec and replace the existing
-        // memory image, we can leak self without worrying about
-        // resource exhaustion.
-        let this = mem::ManuallyDrop::new(Arc::clone(self));
+        let this = Arc::clone(self);
 
         // Here we basically just want to say that in the child process
         // we'll configure the read/write file descriptors to *not* be
         // cloexec, so they're inherited across the exec and specified as
         // integers through `string_arg` above.
-        unsafe {
-            cmd.pre_exec(move || {
-                let read = this.read.as_raw_fd();
-                let write = this.write.as_raw_fd();
+        let f = move || {
+            let p = Arc::as_ptr(&this);
+            // Increment strong count to ensure that it is leaked.
+            //
+            // Safety:
+            //
+            // p must be a valid pointer to Arc<Self>.
+            unsafe { Arc::increment_strong_count(p) };
 
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
+            let read = this.read.as_raw_fd();
+            let write = this.write.as_raw_fd();
 
-                Ok(())
-            });
-        }
+            set_cloexec(read, false)?;
+            set_cloexec(write, false)?;
+
+            Ok(())
+        };
+
+        unsafe { cmd.pre_exec(f) };
     }
 }
 

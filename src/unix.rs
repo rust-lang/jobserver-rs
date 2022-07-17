@@ -206,35 +206,12 @@ impl Client {
 
     pub fn configure(self: &Arc<Self>, cmd: &mut Command) {
         let this = Arc::clone(self);
-        let p = ShareablePtr(Arc::into_raw(this));
-
-        // Safety:
-        //
-        // p.0 is a pointer obtained through Arc::into_raw
-        // and the associated Arc is valid.
-        let this = unsafe { Arc::from_raw(p.0) };
 
         // Here we basically just want to say that in the child process
         // we'll configure the read/write file descriptors to *not* be
         // cloexec, so they're inherited across the exec and specified as
         // integers through `string_arg` above.
         let f = move || {
-            // Increment strong count to ensure that it is leaked.
-            //
-            // Basically, Arc uses reference counting to keep track of the
-            // references and it is dropped when the reference counting
-            // reaches 0.
-            //
-            // Using Arc::increment_strong_count increment the reference
-            // counting by 1 without creating an Arc, thus prevents the
-            // reference counting from ever reaching 0 and being dropped.
-            //
-            // Safety:
-            //
-            // p.0 is a pointer obtained through Arc::into_raw
-            // and the associated Arc is valid.
-            unsafe { Arc::increment_strong_count(p.0) };
-
             let read = this.read.as_raw_fd();
             let write = this.write.as_raw_fd();
 
@@ -244,6 +221,8 @@ impl Client {
             Ok(())
         };
 
+        // cmd will store `f` until it is dropped.
+        // Thus, the Arc inside `f` will also be kept alive.
         unsafe { cmd.pre_exec(f) };
     }
 }
@@ -386,8 +365,3 @@ extern "C" fn sigusr1_handler(
 ) {
     // nothing to do
 }
-
-struct ShareablePtr<T>(*const T);
-
-unsafe impl<T> Send for ShareablePtr<T> {}
-unsafe impl<T> Sync for ShareablePtr<T> {}

@@ -26,7 +26,7 @@ fn server() {
         stderr,
     } = cmd.output().unwrap();
 
-    assert!(status.success());
+    assert!(status.success(), "{:#?}", String::from_utf8_lossy(&stderr));
     assert_eq!(&*stderr, b"hello!\n");
 }
 

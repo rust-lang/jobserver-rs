@@ -36,6 +36,11 @@ path = "tests/client-of-myself.rs"
 harness = false
 
 [[test]]
+name = "client-dropped-before-command"
+path = "tests/client-dropped-before-command.rs"
+harness = false
+
+[[test]]
 name = "make-as-a-client"
 path = "tests/make-as-a-client.rs"
 harness = false

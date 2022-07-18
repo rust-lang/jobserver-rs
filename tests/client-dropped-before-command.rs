@@ -27,7 +27,7 @@ fn server() {
     } = cmd.output().unwrap();
 
     assert!(status.success());
-    assert_eq!(&*stderr, b"hello!");
+    assert_eq!(&*stderr, b"hello!\n");
 }
 
 fn client() {

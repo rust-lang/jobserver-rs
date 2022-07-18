@@ -18,6 +18,7 @@ fn server() {
     let mut cmd = Command::new(me);
     cmd.env("I_AM_THE_CLIENT", "1");
     client.configure(&mut cmd);
+    drop(client);
 
     let Output {
         status,

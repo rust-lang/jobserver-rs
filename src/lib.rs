@@ -332,7 +332,7 @@ impl Client {
     /// well and run the `f` which spawns the process.
     ///
     /// NOTE that you have to spawn the process inside `f`, otherwise the jobserver
-    /// would be inherited.
+    /// would not be inherited.
     ///
     /// This function is required to be called to ensure that a jobserver is
     /// properly inherited to a child process. If this function is *not* called
@@ -365,7 +365,7 @@ impl Client {
     /// well and run the `f` which spawns the process.
     ///
     /// NOTE that you have to spawn the process inside `f`, otherwise the jobserver
-    /// would be inherited.
+    /// would not be inherited.
     ///
     /// This function is required to be called to ensure that a jobserver is
     /// properly inherited to a child process. If this function is *not* called

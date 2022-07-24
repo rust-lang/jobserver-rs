@@ -17,14 +17,14 @@ fn server() {
 
     let mut cmd = Command::new(me);
     cmd.env("I_AM_THE_CLIENT", "1");
-    client.configure(&mut cmd);
-    drop(client);
 
     let Output {
         status,
         stdout: _stdout,
         stderr,
-    } = cmd.output().unwrap();
+    } = client
+        .configure_and_run(&mut cmd, |cmd| cmd.output())
+        .unwrap();
 
     assert!(status.success(), "{:#?}", String::from_utf8_lossy(&stderr));
     assert_eq!(&*stderr, b"hello!\n");

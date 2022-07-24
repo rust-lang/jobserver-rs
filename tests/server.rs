@@ -75,8 +75,7 @@ bar:
     // token", so we acquire our one token to drain the jobserver, and this
     // should mean that `make` itself never has a second token available to it.
     let _a = c.acquire();
-    c.configure(&mut cmd);
-    let output = t!(cmd.output());
+    let output = c.configure_and_run(&mut cmd, |cmd| cmd.output()).unwrap();
     println!(
         "\n\t=== stderr\n\t\t{}",
         String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t")
@@ -127,8 +126,7 @@ bar:
 
     // We're leaking one extra token to `make` sort of violating the makefile
     // jobserver protocol. It has the desired effect though.
-    c.configure(&mut cmd);
-    let output = t!(cmd.output());
+    let output = c.configure_and_run(&mut cmd, |cmd| cmd.output()).unwrap();
     println!(
         "\n\t=== stderr\n\t\t{}",
         String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t")

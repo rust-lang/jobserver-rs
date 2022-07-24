@@ -29,9 +29,12 @@ fn server() {
     let client = t!(Client::new(1));
     let mut cmd = Command::new(me);
     cmd.env("I_AM_THE_CLIENT", "1").stdout(Stdio::piped());
-    client.configure(&mut cmd);
+
     let acq = client.acquire().unwrap();
-    let mut child = t!(cmd.spawn());
+    let mut child = client
+        .configure_and_run(&mut cmd, |cmd| cmd.spawn())
+        .unwrap();
+
     let stdout = child.stdout.take().unwrap();
     let (tx, rx) = mpsc::channel();
     let t = thread::spawn(move || {

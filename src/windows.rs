@@ -1,6 +1,5 @@
 use std::ffi::CString;
 use std::io;
-use std::process::Command;
 use std::ptr;
 use std::sync::Arc;
 use std::thread::{Builder, JoinHandle};
@@ -170,9 +169,16 @@ impl Client {
         self.name.clone()
     }
 
-    pub fn configure(&self, _cmd: &mut Command) {
+    pub fn pre_run(&self) -> io::Result<()> {
         // nothing to do here, we gave the name of our semaphore to the
         // child above
+        Ok(())
+    }
+
+    pub fn post_run(&self) -> io::Result<()> {
+        // nothing to do here, we gave the name of our semaphore to the
+        // child above
+        Ok(())
     }
 }
 

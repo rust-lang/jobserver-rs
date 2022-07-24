@@ -4,7 +4,6 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
 use std::os::unix::prelude::*;
-use std::process::Command;
 use std::ptr;
 use std::sync::{Arc, Once};
 use std::thread::{self, Builder, JoinHandle};
@@ -204,26 +203,18 @@ impl Client {
         format!("{},{}", self.read.as_raw_fd(), self.write.as_raw_fd())
     }
 
-    pub fn configure(self: &Arc<Self>, cmd: &mut Command) {
-        let this = Arc::clone(self);
+    pub fn pre_run(&self) -> io::Result<()> {
+        set_cloexec(self.read.as_raw_fd(), false)?;
+        set_cloexec(self.write.as_raw_fd(), false)?;
 
-        // Here we basically just want to say that in the child process
-        // we'll configure the read/write file descriptors to *not* be
-        // cloexec, so they're inherited across the exec and specified as
-        // integers through `string_arg` above.
-        let f = move || {
-            let read = this.read.as_raw_fd();
-            let write = this.write.as_raw_fd();
+        Ok(())
+    }
 
-            set_cloexec(read, false)?;
-            set_cloexec(write, false)?;
+    pub fn post_run(&self) -> io::Result<()> {
+        set_cloexec(self.read.as_raw_fd(), true)?;
+        set_cloexec(self.write.as_raw_fd(), true)?;
 
-            Ok(())
-        };
-
-        // cmd will store `f` until it is dropped.
-        // Thus, the Arc inside `f` will also be kept alive.
-        unsafe { cmd.pre_exec(f) };
+        Ok(())
     }
 }
 

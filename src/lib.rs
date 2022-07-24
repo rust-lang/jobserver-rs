@@ -118,6 +118,20 @@ impl Command for process::Command {
         process::Command::env_remove(self, key.as_ref())
     }
 }
+#[cfg(feature = "tokio")]
+impl Command for tokio::process::Command {
+    fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
+    where
+        K: AsRef<ffi::OsStr>,
+        V: AsRef<ffi::OsStr>,
+    {
+        tokio::process::Command::env(self, key.as_ref(), val.as_ref())
+    }
+
+    fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self {
+        tokio::process::Command::env_remove(self, key.as_ref())
+    }
+}
 impl<T: Command> Command for &mut T {
     fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
     where

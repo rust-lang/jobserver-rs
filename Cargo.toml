@@ -11,6 +11,9 @@ An implementation of the GNU make jobserver for Rust
 """
 edition = "2018"
 
+[dependencies]
+tokio = { version = "1", no-default-features = true, features = ["process"], optional = true }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.50"
 

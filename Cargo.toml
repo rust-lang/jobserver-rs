@@ -45,6 +45,12 @@ path = "tests/client-dropped-before-command.rs"
 harness = false
 
 [[test]]
+name = "client-dropped-before-command-tokio"
+path = "tests/client-dropped-before-command-tokio.rs"
+harness = false
+required-features = ["tokio"]
+
+[[test]]
 name = "make-as-a-client"
 path = "tests/make-as-a-client.rs"
 harness = false

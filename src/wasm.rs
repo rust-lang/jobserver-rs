@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{Builder, JoinHandle};
@@ -51,7 +52,7 @@ impl Client {
         Ok(())
     }
 
-    pub fn string_arg(&self) -> String {
+    pub fn string_arg(&self) -> Cow<'_, str> {
         panic!(
             "On this platform there is no cross process jobserver support,
              so Client::configure_and_run is not supported."

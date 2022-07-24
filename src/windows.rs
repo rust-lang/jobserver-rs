@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ffi::CString;
 use std::io;
 use std::ptr;
@@ -165,8 +166,8 @@ impl Client {
         }
     }
 
-    pub fn string_arg(&self) -> String {
-        self.name.clone()
+    pub fn string_arg(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.name)
     }
 
     pub fn pre_run(&self) -> io::Result<()> {

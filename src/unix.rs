@@ -1,5 +1,6 @@
 use libc::c_int;
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
@@ -199,8 +200,12 @@ impl Client {
         }
     }
 
-    pub fn string_arg(&self) -> String {
-        format!("{},{}", self.read.as_raw_fd(), self.write.as_raw_fd())
+    pub fn string_arg(&self) -> Cow<'_, str> {
+        Cow::Owned(format!(
+            "{},{}",
+            self.read.as_raw_fd(),
+            self.write.as_raw_fd()
+        ))
     }
 
     pub fn pre_run(&self) -> io::Result<()> {

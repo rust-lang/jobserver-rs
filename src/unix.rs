@@ -1,10 +1,10 @@
 use libc::c_int;
 
+use std::borrow::Cow;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
 use std::os::unix::prelude::*;
-use std::process::Command;
 use std::ptr;
 use std::sync::{Arc, Once};
 use std::thread::{self, Builder, JoinHandle};
@@ -200,24 +200,26 @@ impl Client {
         }
     }
 
-    pub fn string_arg(&self) -> String {
-        format!("{},{}", self.read.as_raw_fd(), self.write.as_raw_fd())
+    pub fn string_arg(&self) -> Cow<'_, str> {
+        Cow::Owned(format!(
+            "{},{}",
+            self.read.as_raw_fd(),
+            self.write.as_raw_fd()
+        ))
     }
 
-    pub fn configure(&self, cmd: &mut Command) {
-        // Here we basically just want to say that in the child process
-        // we'll configure the read/write file descriptors to *not* be
-        // cloexec, so they're inherited across the exec and specified as
-        // integers through `string_arg` above.
-        let read = self.read.as_raw_fd();
-        let write = self.write.as_raw_fd();
-        unsafe {
-            cmd.pre_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
-                Ok(())
-            });
-        }
+    pub fn pre_run(&self) -> io::Result<()> {
+        set_cloexec(self.read.as_raw_fd(), false)?;
+        set_cloexec(self.write.as_raw_fd(), false)?;
+
+        Ok(())
+    }
+
+    pub fn post_run(&self) -> io::Result<()> {
+        set_cloexec(self.read.as_raw_fd(), true)?;
+        set_cloexec(self.write.as_raw_fd(), true)?;
+
+        Ok(())
     }
 }
 

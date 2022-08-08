@@ -62,14 +62,13 @@ bar:
         .as_bytes()
     ));
 
-    // We're leaking one extra token to `make` sort of violating the makefile
-    // jobserver protocol. It has the desired effect though.
-    c.configure(&mut cmd);
-
     let listener = t!(TcpListener::bind("127.0.0.1:0"));
     let addr = t!(listener.local_addr());
     cmd.env("TEST_ADDR", addr.to_string());
-    let mut child = t!(cmd.spawn());
+
+    // We're leaking one extra token to `make` sort of violating the makefile
+    // jobserver protocol. It has the desired effect though.
+    let mut child = c.configure_and_run(&mut cmd, |cmd| cmd.spawn()).unwrap();
 
     // We should get both connections as the two programs should be run
     // concurrently.

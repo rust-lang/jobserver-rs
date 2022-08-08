@@ -49,7 +49,7 @@
 //!
 //! let client = Client::new(4).expect("failed to create jobserver");
 //! let mut cmd = Command::new("make");
-//! client.configure(&mut cmd);
+//! let child = client.configure_and_run(&mut cmd, |cmd| cmd.spawn()).unwrap();
 //! ```
 //!
 //! ## Caveats
@@ -79,8 +79,9 @@
 #![doc(html_root_url = "https://docs.rs/jobserver/0.1")]
 
 use std::env;
+use std::ffi;
 use std::io;
-use std::process::Command;
+use std::process;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 #[cfg(unix)]
@@ -92,6 +93,60 @@ mod imp;
 #[cfg(not(any(unix, windows)))]
 #[path = "wasm.rs"]
 mod imp;
+
+/// Command that can be accepted by this crate.
+pub trait Command {
+    /// Inserts or updates an environment variable mapping.
+    fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
+    where
+        K: AsRef<ffi::OsStr>,
+        V: AsRef<ffi::OsStr>;
+
+    /// Removes an environment variable mapping.
+    fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self;
+}
+impl Command for process::Command {
+    fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
+    where
+        K: AsRef<ffi::OsStr>,
+        V: AsRef<ffi::OsStr>,
+    {
+        process::Command::env(self, key.as_ref(), val.as_ref())
+    }
+
+    fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self {
+        process::Command::env_remove(self, key.as_ref())
+    }
+}
+#[cfg(feature = "tokio")]
+impl Command for tokio::process::Command {
+    fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
+    where
+        K: AsRef<ffi::OsStr>,
+        V: AsRef<ffi::OsStr>,
+    {
+        tokio::process::Command::env(self, key.as_ref(), val.as_ref())
+    }
+
+    fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self {
+        tokio::process::Command::env_remove(self, key.as_ref())
+    }
+}
+impl<T: Command> Command for &mut T {
+    fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
+    where
+        K: AsRef<ffi::OsStr>,
+        V: AsRef<ffi::OsStr>,
+    {
+        (*self).env(key.as_ref(), val.as_ref());
+        self
+    }
+
+    fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self {
+        (*self).env_remove(key.as_ref());
+        self
+    }
+}
 
 /// A client of a jobserver
 ///
@@ -274,7 +329,10 @@ impl Client {
     }
 
     /// Configures a child process to have access to this client's jobserver as
-    /// well.
+    /// well and run the `f` which spawns the process.
+    ///
+    /// NOTE that you have to spawn the process inside `f`, otherwise the jobserver
+    /// would not be inherited.
     ///
     /// This function is required to be called to ensure that a jobserver is
     /// properly inherited to a child process. If this function is *not* called
@@ -289,13 +347,25 @@ impl Client {
     /// two file descriptors for this client to be inherited to the child.
     ///
     /// On platforms other than Unix and Windows this panics.
-    pub fn configure(&self, cmd: &mut Command) {
+    pub fn configure_and_run<Cmd, F, R>(&self, mut cmd: Cmd, f: F) -> io::Result<R>
+    where
+        Cmd: Command,
+        F: FnOnce(&mut Cmd) -> io::Result<R>,
+    {
         cmd.env("CARGO_MAKEFLAGS", &self.mflags_env());
-        self.inner.configure(cmd);
+
+        let res = self.do_run(&mut cmd, f);
+
+        cmd.env_remove("CARGO_MAKEFLAGS");
+
+        res
     }
 
     /// Configures a child process to have access to this client's jobserver as
-    /// well.
+    /// well and run the `f` which spawns the process.
+    ///
+    /// NOTE that you have to spawn the process inside `f`, otherwise the jobserver
+    /// would not be inherited.
     ///
     /// This function is required to be called to ensure that a jobserver is
     /// properly inherited to a child process. If this function is *not* called
@@ -311,12 +381,35 @@ impl Client {
     /// this client to be inherited to the child.
     ///
     /// On platforms other than Unix and Windows this panics.
-    pub fn configure_make(&self, cmd: &mut Command) {
+    pub fn configure_make_and_run<Cmd, F, R>(&self, mut cmd: Cmd, f: F) -> io::Result<R>
+    where
+        Cmd: Command,
+        F: FnOnce(&mut Cmd) -> io::Result<R>,
+    {
         let value = self.mflags_env();
-        cmd.env("CARGO_MAKEFLAGS", &value);
-        cmd.env("MAKEFLAGS", &value);
-        cmd.env("MFLAGS", &value);
-        self.inner.configure(cmd);
+        cmd.env("CARGO_MAKEFLAGS", &value)
+            .env("MAKEFLAGS", &value)
+            .env("MFLAGS", &value);
+
+        let res = self.do_run(&mut cmd, f);
+
+        cmd.env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS");
+
+        res
+    }
+
+    fn do_run<Cmd, F, R>(&self, cmd: &mut Cmd, f: F) -> io::Result<R>
+    where
+        Cmd: Command,
+        F: FnOnce(&mut Cmd) -> io::Result<R>,
+    {
+        self.inner.pre_run()?;
+        let res = f(cmd);
+        self.inner.post_run()?;
+
+        res
     }
 
     fn mflags_env(&self) -> String {

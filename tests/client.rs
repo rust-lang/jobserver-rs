@@ -9,7 +9,7 @@ use std::thread;
 
 use futures::future::{self, Future};
 use futures::stream::{self, Stream};
-use jobserver::Client;
+use jobslot::Client;
 use tokio_core::reactor::Core;
 use tokio_process::CommandExt;
 

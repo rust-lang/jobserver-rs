@@ -1,7 +1,7 @@
 use std::env;
 use std::process::{Command, Output};
 
-use jobserver::Client;
+use jobslot::Client;
 
 fn main() {
     if env::var("I_AM_THE_CLIENT").is_ok() {

@@ -22,7 +22,7 @@
 //! Connect to a jobserver that was set up by `make` or a different process:
 //!
 //! ```no_run
-//! use jobserver::Client;
+//! use jobslot::Client;
 //!
 //! // See API documentation for why this is `unsafe`
 //! let client = match unsafe { Client::from_env() } {
@@ -34,7 +34,7 @@
 //! Acquire and release token from a jobserver:
 //!
 //! ```no_run
-//! use jobserver::Client;
+//! use jobslot::Client;
 //!
 //! let client = unsafe { Client::from_env().unwrap() };
 //! let token = client.acquire().unwrap(); // blocks until it is available
@@ -45,7 +45,7 @@
 //!
 //! ```
 //! use std::process::Command;
-//! use jobserver::Client;
+//! use jobslot::Client;
 //!
 //! let client = Client::new(4).expect("failed to create jobserver");
 //! let mut cmd = Command::new("make");
@@ -218,7 +218,7 @@ impl Client {
     /// # Examples
     ///
     /// ```
-    /// use jobserver::Client;
+    /// use jobslot::Client;
     ///
     /// let client = Client::new(4).expect("failed to create jobserver");
     /// ```

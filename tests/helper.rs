@@ -1,4 +1,4 @@
-use jobserver::Client;
+use jobslot::Client;
 use std::sync::atomic::*;
 use std::sync::mpsc;
 use std::sync::*;
@@ -49,7 +49,7 @@ fn acquire() {
 #[test]
 fn prompt_shutdown() {
     for _ in 0..100 {
-        let client = jobserver::Client::new(4).unwrap();
+        let client = Client::new(4).unwrap();
         let count = Arc::new(AtomicU32::new(0));
         let count2 = count.clone();
         let tokens = Arc::new(Mutex::new(Vec::new()));

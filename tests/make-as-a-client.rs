@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 
-use jobserver::Client;
+use jobslot::Client;
 
 macro_rules! t {
     ($e:expr) => {

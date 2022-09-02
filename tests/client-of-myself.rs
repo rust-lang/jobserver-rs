@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-use jobserver::Client;
+use jobslot::Client;
 
 macro_rules! t {
     ($e:expr) => {

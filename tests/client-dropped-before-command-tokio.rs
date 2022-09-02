@@ -2,7 +2,7 @@ use std::env;
 use std::process::Output;
 use tokio::{process::Command, runtime};
 
-use jobserver::Client;
+use jobslot::Client;
 
 fn main() {
     if env::var("I_AM_THE_CLIENT").is_ok() {

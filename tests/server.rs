@@ -9,25 +9,16 @@ use std::thread;
 
 use jobslot::Client;
 
-macro_rules! t {
-    ($e:expr) => {
-        match $e {
-            Ok(e) => e,
-            Err(e) => panic!("{} failed with {}", stringify!($e), e),
-        }
-    };
-}
-
 #[test]
 fn server_smoke() {
-    let c = t!(Client::new(1));
+    let c = Client::new(1).unwrap();
     drop(c.acquire().unwrap());
     drop(c.acquire().unwrap());
 }
 
 #[test]
 fn server_multiple() {
-    let c = t!(Client::new(2));
+    let c = Client::new(2).unwrap();
     let a = c.acquire().unwrap();
     let b = c.acquire().unwrap();
     drop((a, b));
@@ -35,7 +26,7 @@ fn server_multiple() {
 
 #[test]
 fn server_blocks() {
-    let c = t!(Client::new(1));
+    let c = Client::new(1).unwrap();
     let a = c.acquire().unwrap();
     let hit = Arc::new(AtomicBool::new(false));
     let hit2 = hit.clone();
@@ -54,22 +45,25 @@ fn server_blocks() {
 
 #[test]
 fn make_as_a_single_thread_client() {
-    let c = t!(Client::new(1));
+    let c = Client::new(1).unwrap();
     let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
     let mut cmd = Command::new(prog);
     cmd.current_dir(td.path());
 
-    t!(t!(File::create(td.path().join("Makefile"))).write_all(
-        b"
+    File::create(td.path().join("Makefile"))
+        .unwrap()
+        .write_all(
+            b"
 all: foo bar
 foo:
 \techo foo
 bar:
 \techo bar
-"
-    ));
+",
+        )
+        .unwrap();
 
     // The jobserver protocol means that the `make` process itself "runs with a
     // token", so we acquire our one token to drain the jobserver, and this
@@ -78,11 +72,11 @@ bar:
     let output = c.configure_and_run(&mut cmd, |cmd| cmd.output()).unwrap();
     println!(
         "\n\t=== stderr\n\t\t{}",
-        String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t")
+        String::from_utf8_lossy(&output.stderr).replace('\n', "\n\t\t")
     );
     println!(
         "\t=== stdout\n\t\t{}",
-        String::from_utf8_lossy(&output.stdout).replace("\n", "\n\t\t")
+        String::from_utf8_lossy(&output.stdout).replace('\n', "\n\t\t")
     );
 
     assert!(output.status.success());
@@ -107,33 +101,36 @@ foo
 
 #[test]
 fn make_as_a_multi_thread_client() {
-    let c = t!(Client::new(1));
+    let c = Client::new(1).unwrap();
     let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
     let mut cmd = Command::new(prog);
     cmd.current_dir(td.path());
 
-    t!(t!(File::create(td.path().join("Makefile"))).write_all(
-        b"
+    File::create(td.path().join("Makefile"))
+        .unwrap()
+        .write_all(
+            b"
 all: foo bar
 foo:
 \techo foo
 bar:
 \techo bar
-"
-    ));
+",
+        )
+        .unwrap();
 
     // We're leaking one extra token to `make` sort of violating the makefile
     // jobserver protocol. It has the desired effect though.
     let output = c.configure_and_run(&mut cmd, |cmd| cmd.output()).unwrap();
     println!(
         "\n\t=== stderr\n\t\t{}",
-        String::from_utf8_lossy(&output.stderr).replace("\n", "\n\t\t")
+        String::from_utf8_lossy(&output.stderr).replace('\n', "\n\t\t")
     );
     println!(
         "\t=== stdout\n\t\t{}",
-        String::from_utf8_lossy(&output.stdout).replace("\n", "\n\t\t")
+        String::from_utf8_lossy(&output.stdout).replace('\n', "\n\t\t")
     );
 
     assert!(output.status.success());
@@ -141,7 +138,7 @@ bar:
 
 #[test]
 fn zero_client() {
-    let client = t!(Client::new(0));
+    let client = Client::new(0).unwrap();
     let (tx, rx) = mpsc::channel();
     let helper = client
         .into_helper_thread(move |a| drop(tx.send(a)))

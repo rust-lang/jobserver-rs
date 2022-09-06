@@ -3,18 +3,9 @@ use std::sync::atomic::*;
 use std::sync::mpsc;
 use std::sync::*;
 
-macro_rules! t {
-    ($e:expr) => {
-        match $e {
-            Ok(e) => e,
-            Err(e) => panic!("{} failed with {}", stringify!($e), e),
-        }
-    };
-}
-
 #[test]
 fn helper_smoke() {
-    let client = t!(Client::new(1));
+    let client = Client::new(1).unwrap();
     drop(client.clone().into_helper_thread(|_| ()).unwrap());
     drop(client.clone().into_helper_thread(|_| ()).unwrap());
     drop(client.clone().into_helper_thread(|_| ()).unwrap());
@@ -26,7 +17,7 @@ fn helper_smoke() {
 #[test]
 fn acquire() {
     let (tx, rx) = mpsc::channel();
-    let client = t!(Client::new(1));
+    let client = Client::new(1).unwrap();
     let helper = client
         .into_helper_thread(move |a| drop(tx.send(a)))
         .unwrap();

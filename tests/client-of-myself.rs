@@ -7,15 +7,6 @@ use std::thread;
 
 use jobslot::Client;
 
-macro_rules! t {
-    ($e:expr) => {
-        match $e {
-            Ok(e) => e,
-            Err(e) => panic!("{} failed with {}", stringify!($e), e),
-        }
-    };
-}
-
 fn main() {
     if env::var("I_AM_THE_CLIENT").is_ok() {
         client();
@@ -25,8 +16,8 @@ fn main() {
 }
 
 fn server() {
-    let me = t!(env::current_exe());
-    let client = t!(Client::new(1));
+    let me = env::current_exe().unwrap();
+    let client = Client::new(1).unwrap();
     let mut cmd = Command::new(me);
     cmd.env("I_AM_THE_CLIENT", "1").stdout(Stdio::piped());
 
@@ -39,7 +30,7 @@ fn server() {
     let (tx, rx) = mpsc::channel();
     let t = thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
-            tx.send(t!(line)).unwrap();
+            tx.send(line.unwrap()).unwrap();
         }
     });
 

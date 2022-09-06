@@ -6,15 +6,6 @@ use std::process::Command;
 
 use jobslot::Client;
 
-macro_rules! t {
-    ($e:expr) => {
-        match $e {
-            Ok(e) => e,
-            Err(e) => panic!("{} failed with {}", stringify!($e), e),
-        }
-    };
-}
-
 fn main() {
     if env::var("_DO_THE_TEST").is_ok() {
         std::process::exit(
@@ -31,16 +22,19 @@ fn main() {
 
     if let Ok(s) = env::var("TEST_ADDR") {
         let mut contents = Vec::new();
-        t!(t!(TcpStream::connect(&s)).read_to_end(&mut contents));
+        TcpStream::connect(&s)
+            .unwrap()
+            .read_to_end(&mut contents)
+            .unwrap();
         return;
     }
 
-    let c = t!(Client::new(1));
+    let c = Client::new(1).unwrap();
     let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
 
-    let me = t!(env::current_exe());
+    let me = env::current_exe().unwrap();
     let me = me.to_str().unwrap();
 
     let mut cmd = Command::new(&me);
@@ -48,22 +42,25 @@ fn main() {
     cmd.env("MAKE", prog);
     cmd.env("_DO_THE_TEST", "1");
 
-    t!(t!(File::create(td.path().join("Makefile"))).write_all(
-        format!(
-            "\
+    File::create(td.path().join("Makefile"))
+        .unwrap()
+        .write_all(
+            format!(
+                "\
 all: foo bar
 foo:
 \t{0}
 bar:
 \t{0}
 ",
-            me
+                me
+            )
+            .as_bytes(),
         )
-        .as_bytes()
-    ));
+        .unwrap();
 
-    let listener = t!(TcpListener::bind("127.0.0.1:0"));
-    let addr = t!(listener.local_addr());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
     cmd.env("TEST_ADDR", addr.to_string());
 
     // We're leaking one extra token to `make` sort of violating the makefile
@@ -72,9 +69,9 @@ bar:
 
     // We should get both connections as the two programs should be run
     // concurrently.
-    let a = t!(listener.accept());
-    let b = t!(listener.accept());
+    let a = listener.accept().unwrap();
+    let b = listener.accept().unwrap();
     drop((a, b));
 
-    assert!(t!(child.wait()).success());
+    assert!(child.wait().unwrap().success());
 }

@@ -19,12 +19,8 @@ tokio = { version = "1", default-features = false, features = ["process"], optio
 libc = "0.2.50"
 
 [dev-dependencies]
-futures = "0.1"
-num_cpus = "1.0"
 tempfile = "3"
 tokio = { version = "1.20.0", features = ["full"] }
-tokio-core = "0.1"
-tokio-process = "0.2"
 
 [[test]]
 name = "client"

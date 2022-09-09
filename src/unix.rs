@@ -89,6 +89,9 @@ impl Client {
         // then we'll have `MAKEFLAGS` env vars but won't actually have
         // access to the file descriptors.
         if is_pipe(read, true) && is_pipe(write, false) {
+            let read = dup(read).ok()?;
+            let write = dup(write).ok()?;
+
             drop(set_cloexec(read, true));
             drop(set_nonblocking(read, false));
 
@@ -295,6 +298,10 @@ fn set_nonblocking(fd: c_int, set: bool) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn dup(fd: c_int) -> io::Result<c_int> {
+    cvt(unsafe { libc::dup(fd) })
 }
 
 fn cvt(t: c_int) -> io::Result<c_int> {

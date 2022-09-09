@@ -267,8 +267,8 @@ impl Client {
     ///
     /// Note that the created `Client` is not automatically inherited into
     /// spawned child processes from this program. Manual usage of the
-    /// `configure` function is required for a child process to have access to a
-    /// job server.
+    /// [`Client::configure_and_run`] or [`Client::configure_make_and_run`]
+    /// function is required for a child process to have access to a job server.
     ///
     /// # Return value
     ///
@@ -276,16 +276,12 @@ impl Client {
     /// `Some` of the connected client will be returned. If no jobserver was
     /// found then `None` will be returned.
     ///
-    /// Note that on Unix the `Client` returned **takes ownership of the file
-    /// descriptors specified in the environment**. Jobservers on Unix are
-    /// implemented with `pipe` file descriptors, and they're inherited from
-    /// parent processes. This `Client` returned takes ownership of the file
-    /// descriptors for this process and will close the file descriptors after
-    /// this value is dropped.
-    ///
-    /// Additionally on Unix this function will configure the file descriptors
+    /// Note that on Unix  this function will configure the file descriptors
     /// with `CLOEXEC` so they're not automatically inherited by spawned
     /// children.
+    ///
+    /// Jobservers on Unix are implemented with `pipe` file descriptors,
+    /// and they're inherited from parent processes.
     ///
     /// # Safety
     ///
@@ -297,9 +293,6 @@ impl Client {
     /// program before any other file descriptors are opened. That way you can
     /// make sure to take ownership properly of the file descriptors passed
     /// down, if any.
-    ///
-    /// It's generally unsafe to call this function twice in a program if the
-    /// previous invocation returned `Some`.
     ///
     /// Note, though, that on Windows it should be safe to call this function
     /// any number of times.

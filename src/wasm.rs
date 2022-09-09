@@ -1,7 +1,9 @@
-use std::borrow::Cow;
-use std::io;
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread::{Builder, JoinHandle};
+use std::{
+    borrow::Cow,
+    io,
+    sync::{Arc, Condvar, Mutex},
+    thread::{Builder, JoinHandle},
+};
 
 #[derive(Debug)]
 pub struct Client {

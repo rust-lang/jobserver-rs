@@ -1,9 +1,10 @@
-use std::borrow::Cow;
-use std::ffi::CString;
-use std::io;
-use std::ptr;
-use std::sync::Arc;
-use std::thread::{Builder, JoinHandle};
+use std::{
+    borrow::Cow,
+    ffi::CString,
+    io, ptr,
+    sync::Arc,
+    thread::{Builder, JoinHandle},
+};
 
 #[derive(Debug)]
 pub struct Client {

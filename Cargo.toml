@@ -15,9 +15,10 @@ rust-version = "1.61.0"
 [dependencies]
 cfg-if = "1.0.0"
 tokio = { version = "1", default-features = false, features = ["process"], optional = true }
+scopeguard = "1.1.0"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.50"
+libc = "0.2.132"
 
 [dev-dependencies]
 tempfile = "3"

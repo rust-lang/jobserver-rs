@@ -101,6 +101,7 @@ use std::{
 };
 
 use cfg_if::cfg_if;
+use scopeguard::guard;
 
 cfg_if! {
     if #[cfg(unix)] {
@@ -354,6 +355,11 @@ impl Client {
     /// words, if not called, then `Client::from_env` will return `None` in the
     /// child process (or the equivalent of `Child::from_env` that `make` uses).
     ///
+    /// ## Environment variables
+    ///
+    /// This function only sets up `CARGO_MAKEFLAGS`, which is used by
+    /// `cargo`.
+    ///
     /// ## Platform-specific behavior
     ///
     /// On Unix and Windows this will clobber the `CARGO_MAKEFLAGS` environment
@@ -361,18 +367,12 @@ impl Client {
     /// two file descriptors for this client to be inherited to the child.
     ///
     /// On platforms other than Unix and Windows this panics.
-    pub fn configure_and_run<Cmd, F, R>(&self, mut cmd: Cmd, f: F) -> io::Result<R>
+    pub fn configure_and_run<Cmd, F, R>(&self, cmd: Cmd, f: F) -> io::Result<R>
     where
         Cmd: Command,
         F: FnOnce(&mut Cmd) -> io::Result<R>,
     {
-        cmd.env("CARGO_MAKEFLAGS", &self.mflags_env());
-
-        let res = self.do_run(&mut cmd, f);
-
-        cmd.env_remove("CARGO_MAKEFLAGS");
-
-        res
+        self.configure_and_run_inner(cmd, f, &["CARGO_MAKEFLAGS"])
     }
 
     /// Configures a child process to have access to this client's jobserver as
@@ -387,6 +387,11 @@ impl Client {
     /// words, if not called, then `Client::from_env` will return `None` in the
     /// child process (or the equivalent of `Child::from_env` that `make` uses).
     ///
+    /// ## Environment variables
+    ///
+    /// This function sets up `CARGO_MAKEFLAGS`, `MAKEFLAGS` and `MFLAGS`,
+    /// which is used by `cargo` and `make`.
+    ///
     /// ## Platform-specific behavior
     ///
     /// On Unix and Windows this will clobber the `CARGO_MAKEFLAGS`,
@@ -395,35 +400,39 @@ impl Client {
     /// this client to be inherited to the child.
     ///
     /// On platforms other than Unix and Windows this panics.
-    pub fn configure_make_and_run<Cmd, F, R>(&self, mut cmd: Cmd, f: F) -> io::Result<R>
+    pub fn configure_make_and_run<Cmd, F, R>(&self, cmd: Cmd, f: F) -> io::Result<R>
+    where
+        Cmd: Command,
+        F: FnOnce(&mut Cmd) -> io::Result<R>,
+    {
+        self.configure_and_run_inner(cmd, f, &["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"])
+    }
+
+    fn configure_and_run_inner<Cmd, F, R>(&self, mut cmd: Cmd, f: F, envs: &[&str]) -> io::Result<R>
     where
         Cmd: Command,
         F: FnOnce(&mut Cmd) -> io::Result<R>,
     {
         let value = self.mflags_env();
-        cmd.env("CARGO_MAKEFLAGS", &value)
-            .env("MAKEFLAGS", &value)
-            .env("MFLAGS", &value);
 
-        let res = self.do_run(&mut cmd, f);
+        // Setup env
+        for env in envs {
+            cmd.env(env, &value);
+        }
 
-        cmd.env_remove("CARGO_MAKEFLAGS")
-            .env_remove("MAKEFLAGS")
-            .env_remove("MFLAGS");
-
-        res
-    }
-
-    fn do_run<Cmd, F, R>(&self, cmd: &mut Cmd, f: F) -> io::Result<R>
-    where
-        Cmd: Command,
-        F: FnOnce(&mut Cmd) -> io::Result<R>,
-    {
+        // Setup fd on unix
         self.inner.pre_run()?;
-        let res = f(cmd);
-        self.inner.post_run()?;
 
-        res
+        // Use RAII to ensure env_remove and post_run is called on unwinding
+        let mut cmd = guard(cmd, |mut cmd| {
+            drop(self.inner.post_run());
+
+            for env in envs {
+                cmd.env_remove(env);
+            }
+        });
+
+        f(&mut cmd)
     }
 
     fn mflags_env(&self) -> String {

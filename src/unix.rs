@@ -1,14 +1,16 @@
 use libc::c_int;
 
-use std::borrow::Cow;
-use std::fs::File;
-use std::io::{self, Read, Write};
-use std::mem;
-use std::os::unix::prelude::*;
-use std::ptr;
-use std::sync::{Arc, Once};
-use std::thread::{self, Builder, JoinHandle};
-use std::time::Duration;
+use std::{
+    borrow::Cow,
+    fs::File,
+    io::{self, Read, Write},
+    mem::MaybeUninit,
+    os::unix::prelude::*,
+    ptr,
+    sync::{Arc, Once},
+    thread::{self, Builder, JoinHandle},
+    time::Duration,
+};
 
 #[derive(Debug)]
 pub struct Client {
@@ -25,7 +27,7 @@ pub struct Acquired {
 
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
-        let client = unsafe { Client::mk()? };
+        let client = Client::mk()?;
 
         // I don't think the character written here matters, but I could be
         // wrong!
@@ -45,7 +47,7 @@ impl Client {
         Ok(client)
     }
 
-    unsafe fn mk() -> io::Result<Client> {
+    fn mk() -> io::Result<Client> {
         let mut pipes = [0; 2];
 
         // Attempt atomically-create-with-cloexec if we can on Linux,
@@ -57,8 +59,8 @@ impl Client {
 
             static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
             if PIPE2_AVAILABLE.load(Ordering::Relaxed) {
-                match cvt(libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC)) {
-                    Ok(_) => return Ok(Client::from_fds(pipes[0], pipes[1])),
+                match cvt(unsafe { libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC) }) {
+                    Ok(_) => return Ok(unsafe { Client::from_fds(pipes[0], pipes[1]) }),
                     Err(err) if err.raw_os_error() != Some(libc::ENOSYS) => return Err(err),
 
                     // err.raw_os_error() == Some(libc::ENOSYS)
@@ -67,10 +69,10 @@ impl Client {
             }
         }
 
-        cvt(libc::pipe(pipes.as_mut_ptr()))?;
+        cvt(unsafe { libc::pipe(pipes.as_mut_ptr()) })?;
         drop(set_cloexec(pipes[0], true));
         drop(set_cloexec(pipes[1], true));
-        Ok(Client::from_fds(pipes[0], pipes[1]))
+        Ok(unsafe { Client::from_fds(pipes[0], pipes[1]) })
     }
 
     pub unsafe fn open(s: &str) -> Option<Client> {
@@ -180,11 +182,22 @@ pub(crate) fn spawn_helper(
 ) -> io::Result<Helper> {
     static USR1_INIT: Once = Once::new();
     let mut err = None;
-    USR1_INIT.call_once(|| unsafe {
-        let mut new: libc::sigaction = mem::zeroed();
-        new.sa_sigaction = sigusr1_handler as usize;
-        new.sa_flags = libc::SA_SIGINFO as _;
-        if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
+    USR1_INIT.call_once(|| {
+        let mut sa_mask = MaybeUninit::uninit();
+        let ret = unsafe { libc::sigemptyset(sa_mask.as_mut_ptr()) };
+        debug_assert_eq!(ret, 0);
+
+        let sa_mask = unsafe { sa_mask.assume_init() };
+
+        let new = libc::sigaction {
+            sa_sigaction: sigusr1_handler as usize,
+            sa_mask,
+            sa_flags: libc::SA_SIGINFO as libc::c_int,
+            #[cfg(target_os = "linux")]
+            sa_restorer: None,
+        };
+
+        if unsafe { libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) } != 0 {
             err = Some(io::Error::last_os_error());
         }
     });
@@ -262,18 +275,16 @@ impl Helper {
 }
 
 fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {
-    unsafe {
-        let previous = cvt(libc::fcntl(fd, libc::F_GETFD))?;
-        let new = if set {
-            previous | libc::FD_CLOEXEC
-        } else {
-            previous & !libc::FD_CLOEXEC
-        };
-        if new != previous {
-            cvt(libc::fcntl(fd, libc::F_SETFD, new))?;
-        }
-        Ok(())
+    let previous = cvt(unsafe { libc::fcntl(fd, libc::F_GETFD) })?;
+    let new = if set {
+        previous | libc::FD_CLOEXEC
+    } else {
+        previous & !libc::FD_CLOEXEC
+    };
+    if new != previous {
+        cvt(unsafe { libc::fcntl(fd, libc::F_SETFD, new) })?;
     }
+    Ok(())
 }
 
 fn set_nonblocking(fd: c_int, set: bool) -> io::Result<()> {
@@ -303,7 +314,7 @@ extern "C" fn sigusr1_handler(
 }
 
 fn is_pipe(fd: RawFd, readable: bool) -> bool {
-    let mut stat = mem::MaybeUninit::<libc::stat>::uninit();
+    let mut stat = MaybeUninit::<libc::stat>::uninit();
 
     if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } == -1 {
         return false;

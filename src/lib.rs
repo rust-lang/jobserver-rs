@@ -93,7 +93,9 @@
 //! [docs]: http://make.mad-scientist.net/papers/jobserver-implementation/
 
 #![deny(missing_docs, missing_debug_implementations)]
-#![doc(html_root_url = "https://docs.rs/jobserver/0.1")]
+// only enables the nightly `doc_auto_cfg` feature when
+// the `docsrs` configuration attribute is defined
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 use std::{
     env, ffi, io, process,

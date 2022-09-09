@@ -12,6 +12,16 @@ An implementation of the GNU make jobserver for Rust
 edition = "2021"
 rust-version = "1.61.0"
 
+# docs.rs-specific configuration, shamelessly copied from
+# https://stackoverflow.com/a/61417700/8375400.
+#
+# To test locally, use ` ./build_doc.sh`
+[package.metadata.docs.rs]
+# document all features
+all-features = true
+# defines the configuration attribute `docsrs`
+rustdoc-args = ["--cfg", "docsrs"]
+
 [dependencies]
 cfg-if = "1.0.0"
 tokio = { version = "1", default-features = false, features = ["process"], optional = true }

@@ -13,6 +13,7 @@ edition = "2021"
 rust-version = "1.61.0"
 
 [dependencies]
+cfg-if = "1.0.0"
 tokio = { version = "1", default-features = false, features = ["process"], optional = true }
 
 [target.'cfg(unix)'.dependencies]

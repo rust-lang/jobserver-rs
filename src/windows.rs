@@ -110,10 +110,7 @@ impl Client {
                     continue;
                 }
                 name.pop(); // chop off the trailing nul
-                let client = Client {
-                    sem: handle,
-                    name: name,
-                };
+                let client = Client { sem: handle, name };
                 if create_limit != limit {
                     client.acquire()?;
                 }

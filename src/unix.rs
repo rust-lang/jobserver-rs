@@ -12,7 +12,9 @@ use std::time::Duration;
 
 #[derive(Debug)]
 pub struct Client {
+    /// This fd is set to be blocking
     read: File,
+    /// This fd is set to be blocking
     write: File,
 }
 
@@ -54,17 +56,13 @@ impl Client {
             use std::sync::atomic::{AtomicBool, Ordering};
 
             static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
-            if PIPE2_AVAILABLE.load(Ordering::SeqCst) {
-                match libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) {
-                    -1 => {
-                        let err = io::Error::last_os_error();
-                        if err.raw_os_error() == Some(libc::ENOSYS) {
-                            PIPE2_AVAILABLE.store(false, Ordering::SeqCst);
-                        } else {
-                            return Err(err);
-                        }
-                    }
-                    _ => return Ok(Client::from_fds(pipes[0], pipes[1])),
+            if PIPE2_AVAILABLE.load(Ordering::Relaxed) {
+                match cvt(libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC)) {
+                    Ok(_) => return Ok(Client::from_fds(pipes[0], pipes[1])),
+                    Err(err) if err.raw_os_error() != Some(libc::ENOSYS) => return Err(err),
+
+                    // err.raw_os_error() == Some(libc::ENOSYS)
+                    _ => PIPE2_AVAILABLE.store(false, Ordering::Relaxed),
                 }
             }
         }
@@ -76,21 +74,10 @@ impl Client {
     }
 
     pub unsafe fn open(s: &str) -> Option<Client> {
-        let mut parts = s.splitn(2, ',');
-        let read = parts.next().unwrap();
-        let write = match parts.next() {
-            Some(s) => s,
-            None => return None,
-        };
+        let (read, write) = s.split_once(',')?;
 
-        let read = match read.parse() {
-            Ok(n) => n,
-            Err(_) => return None,
-        };
-        let write = match write.parse() {
-            Ok(n) => n,
-            Err(_) => return None,
-        };
+        let read = read.parse().ok()?;
+        let write = write.parse().ok()?;
 
         // Ok so we've got two integers that look like file descriptors, but
         // for extra sanity checking let's see if they actually look like
@@ -99,9 +86,13 @@ impl Client {
         // If we're called from `make` *without* the leading + on our rule
         // then we'll have `MAKEFLAGS` env vars but won't actually have
         // access to the file descriptors.
-        if is_valid_fd(read) && is_valid_fd(write) {
+        if is_pipe(read, true) && is_pipe(write, false) {
             drop(set_cloexec(read, true));
+            drop(set_nonblocking(read, false));
+
             drop(set_cloexec(write, true));
+            drop(set_nonblocking(write, false));
+
             Some(Client::from_fds(read, write))
         } else {
             None
@@ -127,61 +118,14 @@ impl Client {
     /// Block waiting for a token, returning `None` if we're interrupted with
     /// EINTR.
     fn acquire_allow_interrupts(&self) -> io::Result<Option<Acquired>> {
-        // We don't actually know if the file descriptor here is set in
-        // blocking or nonblocking mode. AFAIK all released versions of
-        // `make` use blocking fds for the jobserver, but the unreleased
-        // version of `make` doesn't. In the unreleased version jobserver
-        // fds are set to nonblocking and combined with `pselect`
-        // internally.
-        //
-        // Here we try to be compatible with both strategies. We optimistically
-        // try to read from the file descriptor which then may block, return
-        // a token or indicate that polling is needed.
-        // Blocking reads (if possible) allows the kernel to be more selective
-        // about which readers to wake up when a token is written to the pipe.
-        //
-        // We use `poll` here to block this thread waiting for read
-        // readiness, and then afterwards we perform the `read` itself. If
-        // the `read` returns that it would block then we start over and try
-        // again.
-        //
         // Also note that we explicitly don't handle EINTR here. That's used
         // to shut us down, so we otherwise punt all errors upwards.
-        unsafe {
-            let mut fd: libc::pollfd = mem::zeroed();
-            fd.fd = self.read.as_raw_fd();
-            fd.events = libc::POLLIN;
-            loop {
-                let mut buf = [0];
-                match (&self.read).read(&mut buf) {
-                    Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
-                    Ok(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            "early EOF on jobserver pipe",
-                        ))
-                    }
-                    Err(e) => match e.kind() {
-                        io::ErrorKind::WouldBlock => { /* fall through to polling */ }
-                        io::ErrorKind::Interrupted => return Ok(None),
-                        _ => return Err(e),
-                    },
-                }
-
-                loop {
-                    fd.revents = 0;
-                    if libc::poll(&mut fd, 1, -1) == -1 {
-                        let e = io::Error::last_os_error();
-                        return match e.kind() {
-                            io::ErrorKind::Interrupted => Ok(None),
-                            _ => Err(e),
-                        };
-                    }
-                    if fd.revents != 0 {
-                        break;
-                    }
-                }
-            }
+        let mut buf = [0];
+        match (&self.read).read(&mut buf) {
+            Ok(1) => Ok(Some(Acquired { byte: buf[0] })),
+            Ok(_) => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(None),
+            Err(e) => Err(e),
         }
     }
 
@@ -317,10 +261,6 @@ impl Helper {
     }
 }
 
-fn is_valid_fd(fd: c_int) -> bool {
-    unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
-}
-
 fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {
     unsafe {
         let previous = cvt(libc::fcntl(fd, libc::F_GETFD))?;
@@ -360,4 +300,35 @@ extern "C" fn sigusr1_handler(
     _ptr: *mut libc::c_void,
 ) {
     // nothing to do
+}
+
+fn is_pipe(fd: RawFd, readable: bool) -> bool {
+    let mut stat = mem::MaybeUninit::<libc::stat>::uninit();
+
+    if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } == -1 {
+        return false;
+    }
+
+    // Safety:
+    //
+    // libc::fstat succeeds, stat is initialized
+    let stat = unsafe { stat.assume_init() };
+    if (stat.st_mode & libc::S_IFMT) != libc::S_IFIFO {
+        // fd is not a pipe
+        return false;
+    }
+
+    let ret = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if ret == -1 {
+        return false;
+    }
+
+    let status_flags = ret;
+    let access_mode = if readable {
+        libc::O_RDONLY
+    } else {
+        libc::O_WRONLY
+    };
+
+    (status_flags & libc::O_ACCMODE) == access_mode
 }

@@ -52,6 +52,23 @@
 //! let child = client.configure_and_run(&mut cmd, |cmd| cmd.spawn()).unwrap();
 //! ```
 //!
+//! ## Features
+//!
+//!  - tokio: This would enable support of `tokio::process::Command`.
+//!    You would be able to write:
+//!
+//!    ```
+//!    use tokio::process::Command;
+//!    use jobslot::Client;
+//!
+//!    # #[tokio::main]
+//!    # async fn main() {
+//!    let client = Client::new(4).expect("failed to create jobserver");
+//!    let mut cmd = Command::new("make");
+//!    let child = client.configure_and_run(&mut cmd, |cmd| cmd.spawn()).unwrap();
+//!    # }
+//!    ```
+//!
 //! ## Caveats
 //!
 //! This crate makes no attempt to release tokens back to a jobserver on
@@ -78,21 +95,25 @@
 #![deny(missing_docs, missing_debug_implementations)]
 #![doc(html_root_url = "https://docs.rs/jobserver/0.1")]
 
-use std::env;
-use std::ffi;
-use std::io;
-use std::process;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::{
+    env, ffi, io, process,
+    sync::{Arc, Condvar, Mutex, MutexGuard},
+};
 
-#[cfg(unix)]
-#[path = "unix.rs"]
-mod imp;
-#[cfg(windows)]
-#[path = "windows.rs"]
-mod imp;
-#[cfg(not(any(unix, windows)))]
-#[path = "wasm.rs"]
-mod imp;
+use cfg_if::cfg_if;
+
+cfg_if! {
+    if #[cfg(unix)] {
+        #[path = "unix.rs"]
+        mod imp;
+    } else if #[cfg(windows)] {
+        #[path = "windows.rs"]
+        mod imp;
+    } else if #[cfg(not(any(unix, windows)))] {
+        #[path = "wasm.rs"]
+        mod imp;
+    }
+}
 
 /// Command that can be accepted by this crate.
 pub trait Command {
@@ -280,26 +301,19 @@ impl Client {
     /// Note, though, that on Windows it should be safe to call this function
     /// any number of times.
     pub unsafe fn from_env() -> Option<Client> {
-        let var = match env::var("CARGO_MAKEFLAGS")
+        let var = env::var("CARGO_MAKEFLAGS")
             .or_else(|_| env::var("MAKEFLAGS"))
             .or_else(|_| env::var("MFLAGS"))
-        {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-        let mut arg = "--jobserver-fds=";
-        let pos = match var.find(arg) {
-            Some(i) => i,
-            None => {
-                arg = "--jobserver-auth=";
-                match var.find(arg) {
-                    Some(i) => i,
-                    None => return None,
-                }
-            }
-        };
+            .ok()?;
 
-        let s = var[pos + arg.len()..].split(' ').next().unwrap();
+        let s = var
+            .split_ascii_whitespace()
+            .filter_map(|arg| {
+                arg.strip_prefix("--jobserver-fds=")
+                    .or_else(|| arg.strip_prefix("--jobserver-auth="))
+            })
+            .find(|s| !s.is_empty())?;
+
         imp::Client::open(s).map(|c| Client { inner: Arc::new(c) })
     }
 

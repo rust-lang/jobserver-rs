@@ -1,6 +1,6 @@
 [package]
 name = "jobslot"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Jiahao XU <Jiahao_XU@outlook.com>", "Alex Crichton <alex@alexcrichton.com>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/cargo-bins/jobslot"

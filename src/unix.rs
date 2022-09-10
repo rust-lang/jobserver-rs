@@ -10,6 +10,8 @@ use std::{
     thread::{Builder, JoinHandle},
 };
 
+use crate::utils::MaybeOwned;
+
 #[derive(Debug)]
 pub struct Client {
     /// This fd is set to be blocking
@@ -130,18 +132,15 @@ impl Client {
         ))
     }
 
-    pub fn pre_run(&self) -> io::Result<()> {
-        set_cloexec(self.read.as_raw_fd(), false)?;
-        set_cloexec(self.write.as_raw_fd(), false)?;
+    pub fn make_inheritable(&self) -> io::Result<MaybeOwned<'_, Self>> {
+        // Dup automatically reset CLOEXEC flags
+        let read = dup(self.read.as_raw_fd())?;
+        let write = dup(self.write.as_raw_fd())?;
 
-        Ok(())
-    }
+        let read = unsafe { File::from_raw_fd(read) };
+        let write = unsafe { File::from_raw_fd(write) };
 
-    pub fn post_run(&self) -> io::Result<()> {
-        set_cloexec(self.read.as_raw_fd(), true)?;
-        set_cloexec(self.write.as_raw_fd(), true)?;
-
-        Ok(())
+        Ok(MaybeOwned::Owned(Self { read, write }))
     }
 }
 
@@ -162,8 +161,7 @@ pub(crate) fn spawn_helper(
     let mut shutdown_rx = unsafe { File::from_raw_fd(pipes[0]) };
     let shutdown_tx = unsafe { File::from_raw_fd(pipes[1]) };
 
-    let read = dup(client.inner.read.as_raw_fd())?;
-    let mut read = unsafe { File::from_raw_fd(read) };
+    let mut read = client.inner.read.try_clone()?;
 
     set_nonblocking(read.as_raw_fd(), true)?;
     set_nonblocking(shutdown_rx.as_raw_fd(), true)?;

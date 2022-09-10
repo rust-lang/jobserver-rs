@@ -118,6 +118,8 @@ cfg_if! {
     }
 }
 
+mod utils;
+
 /// Command that can be accepted by this crate.
 pub trait Command {
     /// Inserts or updates an environment variable mapping.
@@ -408,34 +410,28 @@ impl Client {
         Cmd: Command,
         F: FnOnce(&mut Cmd) -> io::Result<R>,
     {
-        let value = self.mflags_env();
+        // Setup fd on unix, do nothing on windows.
+        let this = self.inner.make_inheritable()?;
+
+        let arg = this.string_arg();
+        // Older implementations of make use `--jobserver-fds` and newer
+        // implementations use `--jobserver-auth`, pass both to try to catch
+        // both implementations.
+        let value = format!("-j --jobserver-fds={0} --jobserver-auth={0}", arg);
 
         // Setup env
         for env in envs {
             cmd.env(env, &value);
         }
 
-        // Setup fd on unix
-        self.inner.pre_run()?;
-
-        // Use RAII to ensure env_remove and post_run is called on unwinding
+        // Use RAII to ensure env_remove is called on unwinding
         let mut cmd = guard(cmd, |mut cmd| {
-            drop(self.inner.post_run());
-
             for env in envs {
                 cmd.env_remove(env);
             }
         });
 
         f(&mut cmd)
-    }
-
-    fn mflags_env(&self) -> String {
-        let arg = self.inner.string_arg();
-        // Older implementations of make use `--jobserver-fds` and newer
-        // implementations use `--jobserver-auth`, pass both to try to catch
-        // both implementations.
-        format!("-j --jobserver-fds={0} --jobserver-auth={0}", arg)
     }
 
     /// Converts this `Client` into a helper thread to deal with a blocking

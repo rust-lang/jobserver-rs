@@ -26,7 +26,7 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-jobslot = "0.1"
+jobslot = "0.2.4"
 ```
 
 # License

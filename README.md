@@ -10,9 +10,8 @@ An implementation of the GNU make jobserver for Rust
 
 ## Why fork `jobserver`?
 
- - `jobserver` isn't actively maintained.
- - `jobserver`'s maintainer @alexcrichton is not willing to merge [PR] for
-   bug fix.
+ - `jobserver`'s maintainer @alexcrichton is not willing to merge [this PR] for
+   bug fix because it would change its interface.
  - Better performance on unix: `jobserver`'s implementation uses
    [`std::os::unix::process::CommandExt::pre_exec`], which prevents `Command::spawn`
    from using `vfork` on unix.

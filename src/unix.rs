@@ -7,11 +7,22 @@ use std::{
     io::{self, Read, Write},
     mem::MaybeUninit,
     os::unix::prelude::*,
+    sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
     thread::{Builder, JoinHandle},
 };
 
 use crate::utils::MaybeOwned;
+
+/// Lowest file descriptor used in `Selector::try_clone`.
+///
+/// # Notes
+///
+/// Usually fds 0, 1 and 2 are standard in, out and error. Some application
+/// blindly assume this to be true, which means using any one of those a select
+/// could result in some interesting and unexpected errors. Avoid that by using
+/// an fd that doesn't have a pre-determined usage.
+const LOWEST_FD: libc::c_int = 3;
 
 #[derive(Debug)]
 pub struct Client {
@@ -28,33 +39,29 @@ pub struct Acquired {
 
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
-        let client = Client::mk()?;
+        // Create nonblocking and cloexec pipes
+        let pipes = create_pipe(true)?;
+
+        let client = unsafe { Client::from_fds(pipes[0], pipes[1]) };
 
         // I don't think the character written here matters, but I could be
         // wrong!
         const BUFFER: [u8; 128] = [b'|'; 128];
 
-        set_nonblocking(client.write.as_raw_fd(), true)?;
-
         while limit > 0 {
             let n = limit.min(BUFFER.len());
 
+            // Use nonblocking write here so that if the pipe
+            // would block, then return err instead of blocking
+            // the entire process forever.
             (&client.write).write_all(&BUFFER[..n])?;
             limit -= n;
         }
 
+        // Set fd to be blocking
         set_nonblocking(client.write.as_raw_fd(), false)?;
 
         Ok(client)
-    }
-
-    fn mk() -> io::Result<Client> {
-        let pipes = create_pipe()?;
-
-        // Set read to nonblocking
-        set_nonblocking(pipes[0], true)?;
-
-        Ok(unsafe { Client::from_fds(pipes[0], pipes[1]) })
     }
 
     pub unsafe fn open(s: &str) -> Option<Client> {
@@ -71,11 +78,8 @@ impl Client {
         // then we'll have `MAKEFLAGS` env vars but won't actually have
         // access to the file descriptors.
         if is_pipe(read, true) && is_pipe(write, false) {
-            let read = dup(read).ok()?;
-            let write = dup(write).ok()?;
-
-            set_cloexec(read, true).ok()?;
-            set_cloexec(write, true).ok()?;
+            let read = dup_with_cloexec(read).ok()?;
+            let write = dup_with_cloexec(write).ok()?;
 
             // Set read to nonblocking
             set_nonblocking(read, true).ok()?;
@@ -169,7 +173,10 @@ pub(crate) fn spawn_helper(
     state: Arc<super::HelperState>,
     mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
 ) -> io::Result<Helper> {
-    let pipes = create_pipe()?;
+    // Create cloexec pipes but not nonblocking, since we would never
+    // read from it and we would only write 1 and exactly 1 byte
+    // into it.
+    let pipes = create_pipe(false)?;
 
     let mut shutdown_rx = unsafe { File::from_raw_fd(pipes[0]) };
     let shutdown_tx = unsafe { File::from_raw_fd(pipes[1]) };
@@ -242,7 +249,8 @@ impl Helper {
     }
 }
 
-fn create_pipe() -> io::Result<[RawFd; 2]> {
+/// Return fds that are nonblocking and cloexec
+fn create_pipe(nonblocking: bool) -> io::Result<[RawFd; 2]> {
     let mut pipes = [0; 2];
 
     // Attempt atomically-create-with-cloexec if we can on Linux,
@@ -250,11 +258,10 @@ fn create_pipe() -> io::Result<[RawFd; 2]> {
     // with as many kernels/glibc implementations as possible.
     #[cfg(target_os = "linux")]
     {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
         static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
         if PIPE2_AVAILABLE.load(Ordering::Relaxed) {
-            match cvt(unsafe { libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC) }) {
+            let flags = libc::O_CLOEXEC | if nonblocking { libc::O_NONBLOCK } else { 0 };
+            match cvt(unsafe { libc::pipe2(pipes.as_mut_ptr(), flags) }) {
                 Ok(_) => return Ok(pipes),
                 Err(err) if err.raw_os_error() != Some(libc::ENOSYS) => return Err(err),
 
@@ -265,8 +272,14 @@ fn create_pipe() -> io::Result<[RawFd; 2]> {
     }
 
     cvt(unsafe { libc::pipe(pipes.as_mut_ptr()) })?;
-    drop(set_cloexec(pipes[0], true));
-    drop(set_cloexec(pipes[1], true));
+
+    set_cloexec(pipes[0], true)?;
+    set_cloexec(pipes[1], true)?;
+
+    if nonblocking {
+        set_nonblocking(pipes[0], true)?;
+        set_nonblocking(pipes[1], true)?;
+    }
 
     Ok(pipes)
 }
@@ -296,6 +309,29 @@ fn set_nonblocking(fd: c_int, set: bool) -> io::Result<()> {
 
 fn dup(fd: c_int) -> io::Result<c_int> {
     cvt(unsafe { libc::dup(fd) })
+}
+
+fn dup_with_cloexec(fd: RawFd) -> io::Result<RawFd> {
+    static F_DUPFD_CLOEXEC_AVAILBILITY: AtomicBool = AtomicBool::new(true);
+
+    if F_DUPFD_CLOEXEC_AVAILBILITY.load(Ordering::Relaxed) {
+        match cvt(unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, LOWEST_FD) }) {
+            Err(err)
+                if err.raw_os_error() == Some(libc::ENOSYS)
+                // If the flag F_DUPFD_CLOEXEC is invalid, then it might
+                // return EINVAL.
+                || err.raw_os_error() == Some(libc::EINVAL) =>
+            {
+                F_DUPFD_CLOEXEC_AVAILBILITY.store(false, Ordering::Relaxed)
+            }
+            res => return res,
+        }
+    }
+
+    // Fallback to dup + set_cloexec
+    let new_fd = dup(fd)?;
+    set_cloexec(new_fd, true)?;
+    Ok(new_fd)
 }
 
 fn cvt(t: c_int) -> io::Result<c_int> {

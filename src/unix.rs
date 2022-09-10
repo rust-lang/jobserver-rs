@@ -6,10 +6,8 @@ use std::{
     io::{self, Read, Write},
     mem::MaybeUninit,
     os::unix::prelude::*,
-    ptr,
-    sync::{Arc, Once},
-    thread::{self, Builder, JoinHandle},
-    time::Duration,
+    sync::Arc,
+    thread::{Builder, JoinHandle},
 };
 
 #[derive(Debug)]
@@ -48,30 +46,8 @@ impl Client {
     }
 
     fn mk() -> io::Result<Client> {
-        let mut pipes = [0; 2];
+        let pipes = create_pipe()?;
 
-        // Attempt atomically-create-with-cloexec if we can on Linux,
-        // detected by using the `syscall` function in `libc` to try to work
-        // with as many kernels/glibc implementations as possible.
-        #[cfg(target_os = "linux")]
-        {
-            use std::sync::atomic::{AtomicBool, Ordering};
-
-            static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
-            if PIPE2_AVAILABLE.load(Ordering::Relaxed) {
-                match cvt(unsafe { libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC) }) {
-                    Ok(_) => return Ok(unsafe { Client::from_fds(pipes[0], pipes[1]) }),
-                    Err(err) if err.raw_os_error() != Some(libc::ENOSYS) => return Err(err),
-
-                    // err.raw_os_error() == Some(libc::ENOSYS)
-                    _ => PIPE2_AVAILABLE.store(false, Ordering::Relaxed),
-                }
-            }
-        }
-
-        cvt(unsafe { libc::pipe(pipes.as_mut_ptr()) })?;
-        drop(set_cloexec(pipes[0], true));
-        drop(set_cloexec(pipes[1], true));
         Ok(unsafe { Client::from_fds(pipes[0], pipes[1]) })
     }
 
@@ -142,10 +118,7 @@ impl Client {
         let byte = data.map(|d| d.byte).unwrap_or(b'+');
         match (&self.write).write(&[byte])? {
             1 => Ok(()),
-            _ => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "failed to write token back to jobserver",
-            )),
+            _ => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
         }
     }
 
@@ -176,6 +149,7 @@ impl Client {
 pub struct Helper {
     thread: JoinHandle<()>,
     state: Arc<super::HelperState>,
+    shutdown_tx: File,
 }
 
 pub(crate) fn spawn_helper(
@@ -183,98 +157,119 @@ pub(crate) fn spawn_helper(
     state: Arc<super::HelperState>,
     mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
 ) -> io::Result<Helper> {
-    static USR1_INIT: Once = Once::new();
-    let mut err = None;
-    USR1_INIT.call_once(|| {
-        let mut sa_mask = MaybeUninit::uninit();
-        let ret = unsafe { libc::sigemptyset(sa_mask.as_mut_ptr()) };
-        debug_assert_eq!(ret, 0);
+    let pipes = create_pipe()?;
 
-        let sa_mask = unsafe { sa_mask.assume_init() };
+    let mut shutdown_rx = unsafe { File::from_raw_fd(pipes[0]) };
+    let shutdown_tx = unsafe { File::from_raw_fd(pipes[1]) };
 
-        let new = libc::sigaction {
-            sa_sigaction: sigusr1_handler as usize,
-            sa_mask,
-            sa_flags: libc::SA_SIGINFO as libc::c_int,
-            #[cfg(target_os = "linux")]
-            sa_restorer: None,
-        };
+    let read = dup(client.inner.read.as_raw_fd())?;
+    let mut read = unsafe { File::from_raw_fd(read) };
 
-        if unsafe { libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) } != 0 {
-            err = Some(io::Error::last_os_error());
-        }
-    });
-
-    if let Some(e) = err.take() {
-        return Err(e);
-    }
+    set_nonblocking(read.as_raw_fd(), true)?;
+    set_nonblocking(shutdown_rx.as_raw_fd(), true)?;
 
     let state2 = state.clone();
     let thread = Builder::new().spawn(move || {
-        state2.for_each_request(|helper| loop {
-            match client.inner.acquire_allow_interrupts() {
-                Ok(Some(data)) => {
-                    break f(Ok(crate::Acquired {
-                        client: client.inner.clone(),
-                        data,
-                        disabled: false,
-                    }))
-                }
-                Err(e) => break f(Err(e)),
-                Ok(None) if helper.producer_done() => break,
-                Ok(None) => {}
+        state2.for_each_request(|helper| {
+            if let Some(res) = helper_thread_loop(helper, &mut read, &mut shutdown_rx).transpose() {
+                f(res.map(|data| crate::Acquired {
+                    client: client.inner.clone(),
+                    data,
+                    disabled: false,
+                }))
             }
         });
     })?;
 
-    Ok(Helper { thread, state })
+    Ok(Helper {
+        thread,
+        state,
+        shutdown_tx,
+    })
+}
+
+fn helper_thread_loop(
+    helper: &crate::HelperState,
+    read: &mut File,
+    shutdown_rx: &mut File,
+) -> io::Result<Option<Acquired>> {
+    let fds = [read.as_raw_fd(), shutdown_rx.as_raw_fd()];
+
+    loop {
+        if helper.producer_done() {
+            break Ok(None);
+        }
+
+        let (can_acquire, shutdown_requested) = poll_for_readiness(fds)?;
+        if shutdown_requested {
+            break Ok(None);
+        } else if can_acquire {
+            let mut buf = [0];
+            match read.read(&mut buf) {
+                Ok(1) => break Ok(Some(Acquired { byte: buf[0] })),
+                Ok(_) => break Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
+                Err(e)
+                    if e.kind() == io::ErrorKind::Interrupted
+                        || e.kind() == io::ErrorKind::WouldBlock =>
+                {
+                    continue;
+                }
+                Err(e) => break Err(e),
+            }
+        }
+    }
 }
 
 impl Helper {
-    pub fn join(self) {
-        let dur = Duration::from_millis(10);
-        let mut state = self.state.lock();
+    pub fn join(mut self) {
+        let state = self.state.lock();
         debug_assert!(state.producer_done);
 
         // We need to join our helper thread, and it could be blocked in one
         // of two locations. First is the wait for a request, but the
         // initial drop of `HelperState` will take care of that. Otherwise
-        // it may be blocked in `client.acquire()`. We actually have no way
-        // of interrupting that, so resort to `pthread_kill` as a fallback.
-        // This signal should interrupt any blocking `read` call with
-        // `io::ErrorKind::Interrupt` and cause the thread to cleanly exit.
+        // it may be blocked in `client.acquire()`.
         //
-        // Note that we don't do this forever though since there's a chance
-        // of bugs, so only do this opportunistically to make a best effort
-        // at clearing ourselves up.
-        for _ in 0..100 {
-            if state.consumer_done {
-                break;
-            }
-            unsafe {
-                // Ignore the return value here of `pthread_kill`,
-                // apparently on OSX if you kill a dead thread it will
-                // return an error, but on other platforms it may not. In
-                // that sense we don't actually know if this will succeed or
-                // not!
-                libc::pthread_kill(self.thread.as_pthread_t() as _, libc::SIGUSR1);
-            }
-            state = self
-                .state
-                .cvar
-                .wait_timeout(state, dur)
-                .unwrap_or_else(|e| e.into_inner())
-                .0;
-            thread::yield_now(); // we really want the other thread to run
-        }
+        // Since we use `poll` in the helper thread, we can simply write to
+        // shutdown_tx to end the thread.
+        //
+        // If somehow this fails, then it means that the other thread
+        // is alredy terminated.
+        let _ = self.shutdown_tx.write(&[1]);
 
-        // If we managed to actually see the consumer get done, then we can
-        // definitely wait for the thread. Otherwise it's... off in the ether
-        // I guess?
         if state.consumer_done {
             drop(self.thread.join());
         }
     }
+}
+
+fn create_pipe() -> io::Result<[RawFd; 2]> {
+    let mut pipes = [0; 2];
+
+    // Attempt atomically-create-with-cloexec if we can on Linux,
+    // detected by using the `syscall` function in `libc` to try to work
+    // with as many kernels/glibc implementations as possible.
+    #[cfg(target_os = "linux")]
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
+        if PIPE2_AVAILABLE.load(Ordering::Relaxed) {
+            match cvt(unsafe { libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC) }) {
+                Ok(_) => return Ok(pipes),
+                Err(err) if err.raw_os_error() != Some(libc::ENOSYS) => return Err(err),
+
+                // err.raw_os_error() == Some(libc::ENOSYS)
+                _ => PIPE2_AVAILABLE.store(false, Ordering::Relaxed),
+            }
+        }
+    }
+
+    cvt(unsafe { libc::pipe(pipes.as_mut_ptr()) })?;
+    drop(set_cloexec(pipes[0], true));
+    drop(set_cloexec(pipes[1], true));
+
+    Ok(pipes)
 }
 
 fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {
@@ -312,14 +307,6 @@ fn cvt(t: c_int) -> io::Result<c_int> {
     }
 }
 
-extern "C" fn sigusr1_handler(
-    _signum: c_int,
-    _info: *mut libc::siginfo_t,
-    _ptr: *mut libc::c_void,
-) {
-    // nothing to do
-}
-
 fn is_pipe(fd: RawFd, readable: bool) -> bool {
     let mut stat = MaybeUninit::<libc::stat>::uninit();
 
@@ -349,4 +336,44 @@ fn is_pipe(fd: RawFd, readable: bool) -> bool {
     };
 
     (status_flags & libc::O_ACCMODE) == access_mode
+}
+
+/// NOTE that this is a blocking syscall, it will block
+/// until one of the fd is ready.
+fn poll_for_readiness(fds: [RawFd; 2]) -> io::Result<(bool, bool)> {
+    let mut fds = [
+        libc::pollfd {
+            fd: fds[0],
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: fds[1],
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+
+    loop {
+        let ret = cvt(unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) })?;
+        if ret != 0 {
+            break;
+        }
+    }
+
+    Ok((is_ready(fds[0].revents)?, is_ready(fds[1].revents)?))
+}
+
+fn is_ready(revents: libc::c_short) -> io::Result<bool> {
+    use libc::{POLLERR, POLLHUP, POLLIN, POLLNVAL};
+
+    match revents {
+        POLLERR | POLLHUP | POLLIN => Ok(true),
+        // This should be very rare
+        POLLNVAL => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "fd of is invalid",
+        )),
+        _ => Ok(false),
+    }
 }

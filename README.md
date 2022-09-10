@@ -4,7 +4,8 @@ An implementation of the GNU make jobserver for Rust
 
 [![CI](https://github.com/cargo-bins/jobslot/actions/workflows/main.yml/badge.svg)](https://github.com/cargo-bins/jobslot/actions/workflows/main.yml)
 
-[![Crates.io](https://img.shields.io/crates/v/jobslot.svg?maxAge=2592000)](https://crates.io/crates/jobslot)
+
+[![Crates.io](https://img.shields.io/crates/v/jobslot)](https://crates.io/crates/jobslot)
 
 [Documentation](https://docs.rs/jobslot)
 

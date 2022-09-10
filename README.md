@@ -16,7 +16,7 @@ An implementation of the GNU make jobserver for Rust
    [`std::os::unix::process::CommandExt::pre_exec`], which prevents `Command::spawn`
    from using `vfork` on unix.
 
-[PR]: https://github.com/alexcrichton/jobserver-rs/pull/40#issuecomment-1195689752
+[this PR]: https://github.com/alexcrichton/jobserver-rs/pull/40#issuecomment-1195689752
 [`std::os::unix::process::CommandExt::pre_exec`]: https://doc.rust-lang.org/std/os/unix/process/trait.CommandExt.html#tymethod.pre_exec
 
 ## Usage

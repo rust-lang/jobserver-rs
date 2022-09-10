@@ -2,6 +2,7 @@ use libc::c_int;
 
 use std::{
     borrow::Cow,
+    convert::TryInto,
     fs::File,
     io::{self, Read, Write},
     mem::MaybeUninit,
@@ -14,7 +15,7 @@ use crate::utils::MaybeOwned;
 
 #[derive(Debug)]
 pub struct Client {
-    /// This fd is set to be blocking
+    /// This fd is set to be nonblocking
     read: File,
     /// This fd is set to be blocking
     write: File,
@@ -50,6 +51,9 @@ impl Client {
     fn mk() -> io::Result<Client> {
         let pipes = create_pipe()?;
 
+        // Set read to nonblocking
+        set_nonblocking(pipes[0], true)?;
+
         Ok(unsafe { Client::from_fds(pipes[0], pipes[1]) })
     }
 
@@ -70,11 +74,13 @@ impl Client {
             let read = dup(read).ok()?;
             let write = dup(write).ok()?;
 
-            drop(set_cloexec(read, true));
-            drop(set_nonblocking(read, false));
+            set_cloexec(read, true).ok()?;
+            set_cloexec(write, true).ok()?;
 
-            drop(set_cloexec(write, true));
-            drop(set_nonblocking(write, false));
+            // Set read to nonblocking
+            set_nonblocking(read, true).ok()?;
+            // Set write to blocking
+            set_nonblocking(write, false).ok()?;
 
             Some(Client::from_fds(read, write))
         } else {
@@ -92,14 +98,16 @@ impl Client {
     pub fn acquire(&self) -> io::Result<Acquired> {
         // Ignore interrupts and keep trying if that happens
         loop {
+            poll_for_readiness1(self.read.as_raw_fd())?;
+
             if let Some(token) = self.acquire_allow_interrupts()? {
                 return Ok(token);
             }
         }
     }
 
-    /// Block waiting for a token, returning `None` if we're interrupted with
-    /// EINTR.
+    /// Nonblocking waiting for a token, returning `None` if we're interrupted with
+    /// EINTR or EAGAIN.
     fn acquire_allow_interrupts(&self) -> io::Result<Option<Acquired>> {
         // Also note that we explicitly don't handle EINTR here. That's used
         // to shut us down, so we otherwise punt all errors upwards.
@@ -107,7 +115,12 @@ impl Client {
         match (&self.read).read(&mut buf) {
             Ok(1) => Ok(Some(Acquired { byte: buf[0] })),
             Ok(_) => Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(None),
+            Err(e)
+                if e.kind() == io::ErrorKind::Interrupted
+                    || e.kind() == io::ErrorKind::WouldBlock =>
+            {
+                Ok(None)
+            }
             Err(e) => Err(e),
         }
     }
@@ -161,15 +174,12 @@ pub(crate) fn spawn_helper(
     let mut shutdown_rx = unsafe { File::from_raw_fd(pipes[0]) };
     let shutdown_tx = unsafe { File::from_raw_fd(pipes[1]) };
 
-    let mut read = client.inner.read.try_clone()?;
-
-    set_nonblocking(read.as_raw_fd(), true)?;
-    set_nonblocking(shutdown_rx.as_raw_fd(), true)?;
-
     let state2 = state.clone();
     let thread = Builder::new().spawn(move || {
         state2.for_each_request(|helper| {
-            if let Some(res) = helper_thread_loop(helper, &mut read, &mut shutdown_rx).transpose() {
+            if let Some(res) =
+                helper_thread_loop(helper, &client.inner, &mut shutdown_rx).transpose()
+            {
                 f(res.map(|data| crate::Acquired {
                     client: client.inner.clone(),
                     data,
@@ -188,31 +198,22 @@ pub(crate) fn spawn_helper(
 
 fn helper_thread_loop(
     helper: &crate::HelperState,
-    read: &mut File,
+    client: &Client,
     shutdown_rx: &mut File,
 ) -> io::Result<Option<Acquired>> {
-    let fds = [read.as_raw_fd(), shutdown_rx.as_raw_fd()];
+    let fds = [client.read.as_raw_fd(), shutdown_rx.as_raw_fd()];
 
     loop {
         if helper.producer_done() {
             break Ok(None);
         }
 
-        let (can_acquire, shutdown_requested) = poll_for_readiness(fds)?;
+        let (can_acquire, shutdown_requested) = poll_for_readiness2(fds)?;
         if shutdown_requested {
             break Ok(None);
         } else if can_acquire {
-            let mut buf = [0];
-            match read.read(&mut buf) {
-                Ok(1) => break Ok(Some(Acquired { byte: buf[0] })),
-                Ok(_) => break Err(io::Error::from(io::ErrorKind::UnexpectedEof)),
-                Err(e)
-                    if e.kind() == io::ErrorKind::Interrupted
-                        || e.kind() == io::ErrorKind::WouldBlock =>
-                {
-                    continue;
-                }
-                Err(e) => break Err(e),
+            if let Some(acquire) = client.acquire_allow_interrupts()? {
+                break Ok(Some(acquire));
             }
         }
     }
@@ -338,7 +339,7 @@ fn is_pipe(fd: RawFd, readable: bool) -> bool {
 
 /// NOTE that this is a blocking syscall, it will block
 /// until one of the fd is ready.
-fn poll_for_readiness(fds: [RawFd; 2]) -> io::Result<(bool, bool)> {
+fn poll_for_readiness2(fds: [RawFd; 2]) -> io::Result<(bool, bool)> {
     let mut fds = [
         libc::pollfd {
             fd: fds[0],
@@ -353,13 +354,30 @@ fn poll_for_readiness(fds: [RawFd; 2]) -> io::Result<(bool, bool)> {
     ];
 
     loop {
-        let ret = cvt(unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) })?;
+        let ret = cvt(unsafe { libc::poll(fds.as_mut_ptr(), fds.len().try_into().unwrap(), -1) })?;
         if ret != 0 {
             break;
         }
     }
 
     Ok((is_ready(fds[0].revents)?, is_ready(fds[1].revents)?))
+}
+
+/// NOTE that this is a blocking syscall, it will block
+/// until the fd is ready.
+fn poll_for_readiness1(fd: RawFd) -> io::Result<()> {
+    let mut fds = [libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+
+    loop {
+        let ret = cvt(unsafe { libc::poll(fds.as_mut_ptr(), fds.len().try_into().unwrap(), -1) })?;
+        if ret != 0 && is_ready(fds[0].revents)? {
+            break Ok(());
+        }
+    }
 }
 
 fn is_ready(revents: libc::c_short) -> io::Result<bool> {

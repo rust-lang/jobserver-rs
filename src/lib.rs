@@ -103,7 +103,7 @@ use std::{
 };
 
 use cfg_if::cfg_if;
-use scopeguard::guard;
+use scopeguard::{guard, ScopeGuard};
 
 cfg_if! {
     if #[cfg(unix)] {
@@ -517,10 +517,10 @@ impl Client {
         F: FnMut(io::Result<Acquired>) + Send + 'static,
     {
         let state = Arc::new(HelperState::default());
-        Ok(HelperThread {
-            inner: Some(imp::spawn_helper(self, state.clone(), Box::new(f))?),
+        Ok(HelperThread::new(
+            imp::spawn_helper(self, state.clone(), Box::new(f))?,
             state,
-        })
+        ))
     }
 
     /// Blocks the current thread until a token is acquired.
@@ -552,15 +552,38 @@ impl Drop for Acquired {
     }
 }
 
-/// Structure returned from `Client::into_helper_thread` to manage the lifetime
-/// of the helper thread returned, see those associated docs for more info.
 #[derive(Debug)]
-pub struct HelperThread {
-    inner: Option<imp::Helper>,
+struct HelperThreadInner {
+    inner: imp::Helper,
     state: Arc<HelperState>,
 }
 
+impl HelperThreadInner {
+    fn cleanup(self) {
+        // Flag that the producer half is done so the helper thread should exit
+        // quickly if it's waiting. Wake it up if it's actually waiting
+        self.state.lock().producer_done = true;
+        self.state.cvar.notify_one();
+
+        // ... and afterwards perform any thread cleanup logic
+        self.inner.join();
+    }
+}
+
+/// Structure returned from `Client::into_helper_thread` to manage the lifetime
+/// of the helper thread returned, see those associated docs for more info.
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct HelperThread(ScopeGuard<HelperThreadInner, fn(HelperThreadInner)>);
+
 impl HelperThread {
+    fn new(inner: imp::Helper, state: Arc<HelperState>) -> Self {
+        Self(guard(
+            HelperThreadInner { inner, state },
+            HelperThreadInner::cleanup,
+        ))
+    }
+
     /// Request that the helper thread acquires a token, eventually calling the
     /// original closure with a token when it's available.
     ///
@@ -568,20 +591,8 @@ impl HelperThread {
     pub fn request_token(&self) {
         // Indicate that there's one more request for a token and then wake up
         // the helper thread if it's sleeping.
-        self.state.lock().requests += 1;
-        self.state.cvar.notify_one();
-    }
-}
-
-impl Drop for HelperThread {
-    fn drop(&mut self) {
-        // Flag that the producer half is done so the helper thread should exit
-        // quickly if it's waiting. Wake it up if it's actually waiting
-        self.state.lock().producer_done = true;
-        self.state.cvar.notify_one();
-
-        // ... and afterwards perform any thread cleanup logic
-        self.inner.take().unwrap().join();
+        self.0.state.lock().requests += 1;
+        self.0.state.cvar.notify_one();
     }
 }
 

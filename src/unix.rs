@@ -164,7 +164,6 @@ impl Client {
 #[derive(Debug)]
 pub struct Helper {
     thread: JoinHandle<()>,
-    state: Arc<super::HelperState>,
     shutdown_tx: File,
 }
 
@@ -181,9 +180,8 @@ pub(crate) fn spawn_helper(
     let mut shutdown_rx = unsafe { File::from_raw_fd(pipes[0]) };
     let shutdown_tx = unsafe { File::from_raw_fd(pipes[1]) };
 
-    let state2 = state.clone();
     let thread = Builder::new().spawn(move || {
-        state2.for_each_request(|helper| {
+        state.for_each_request(|helper| {
             if let Some(res) =
                 helper_thread_loop(helper, &client.inner, &mut shutdown_rx).transpose()
             {
@@ -198,7 +196,6 @@ pub(crate) fn spawn_helper(
 
     Ok(Helper {
         thread,
-        state,
         shutdown_tx,
     })
 }
@@ -228,9 +225,6 @@ fn helper_thread_loop(
 
 impl Helper {
     pub fn join(mut self) {
-        let state = self.state.lock();
-        debug_assert!(state.producer_done);
-
         // We need to join our helper thread, and it could be blocked in one
         // of two locations. First is the wait for a request, but the
         // initial drop of `HelperState` will take care of that. Otherwise
@@ -243,9 +237,7 @@ impl Helper {
         // is alredy terminated.
         let _ = self.shutdown_tx.write(&[1]);
 
-        if state.consumer_done {
-            drop(self.thread.join());
-        }
+        drop(self.thread.join());
     }
 }
 
@@ -285,24 +277,21 @@ fn create_pipe(nonblocking: bool) -> io::Result<[RawFd; 2]> {
 }
 
 fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {
-    let previous = cvt(unsafe { libc::fcntl(fd, libc::F_GETFD) })?;
-    let new = if set {
-        previous | libc::FD_CLOEXEC
-    } else {
-        previous & !libc::FD_CLOEXEC
-    };
-    if new != previous {
-        cvt(unsafe { libc::fcntl(fd, libc::F_SETFD, new) })?;
-    }
+    // F_GETFD/F_SETFD can only ret/set FD_CLOEXEC
+    let flag = if set { libc::FD_CLOEXEC } else { 0 };
+    cvt(unsafe { libc::fcntl(fd, libc::F_SETFD, flag) })?;
     Ok(())
 }
 
 fn set_nonblocking(fd: c_int, set: bool) -> io::Result<()> {
     let status_flag = if set { libc::O_NONBLOCK } else { 0 };
 
-    unsafe {
-        cvt(libc::fcntl(fd, libc::F_SETFL, status_flag))?;
-    }
+    // F_SETFL can only set the O_APPEND, O_ASYNC, O_DIRECT, O_NOATIME, and
+    // O_NONBLOCK flags.
+    //
+    // For pipe, only O_NONBLOCK is meaningful, so it is ok to
+    // not issue a F_GETFL fcntl syscall.
+    cvt(unsafe { libc::fcntl(fd, libc::F_SETFL, status_flag) })?;
 
     Ok(())
 }
@@ -390,7 +379,7 @@ fn poll_for_readiness2(fds: [RawFd; 2]) -> io::Result<(bool, bool)> {
     ];
 
     loop {
-        let ret = cvt(unsafe { libc::poll(fds.as_mut_ptr(), fds.len().try_into().unwrap(), -1) })?;
+        let ret = poll(&mut fds, -1)?;
         if ret != 0 {
             break;
         }
@@ -409,11 +398,15 @@ fn poll_for_readiness1(fd: RawFd) -> io::Result<()> {
     }];
 
     loop {
-        let ret = cvt(unsafe { libc::poll(fds.as_mut_ptr(), fds.len().try_into().unwrap(), -1) })?;
+        let ret = poll(&mut fds, -1)?;
         if ret != 0 && is_ready(fds[0].revents)? {
             break Ok(());
         }
     }
+}
+
+fn poll(fds: &mut [libc::pollfd], timeout: c_int) -> io::Result<c_int> {
+    cvt(unsafe { libc::poll(fds.as_mut_ptr(), fds.len().try_into().unwrap(), timeout) })
 }
 
 fn is_ready(revents: libc::c_short) -> io::Result<bool> {

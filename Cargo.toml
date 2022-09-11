@@ -30,6 +30,13 @@ scopeguard = "1.1.0"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.132"
 
+[target.'cfg(windows)'.dependencies]
+# Features: 
+#  - std: Implement std-only traits for getrandom::Error
+#  - rdrand: Enable fallback RDRAND-based implementation on x86/x86_64
+getrandom = { version = "0.2.7", features = ["std", "rdrand"] }
+winapi = { version = "0.3.9", features = ["synchapi"] }
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { version = "1.20.0", features = ["full"] }
@@ -38,6 +45,7 @@ tokio = { version = "1.20.0", features = ["full"] }
 name = "client"
 harness = false
 path = "tests/client.rs"
+required-features = ["tokio"]
 
 [[test]]
 name = "server"

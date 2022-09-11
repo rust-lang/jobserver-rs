@@ -1,10 +1,31 @@
 use std::{
     borrow::Cow,
+    convert::TryInto,
     ffi::CString,
-    io, ptr,
+    io,
+    os::raw::c_void,
+    ptr::{self, NonNull},
     sync::Arc,
     thread::{Builder, JoinHandle},
 };
+
+use getrandom::getrandom;
+use winapi::{
+    shared::{
+        minwindef::{BOOL, DWORD, FALSE, TRUE},
+        winerror::ERROR_ALREADY_EXISTS,
+    },
+    um::{
+        handleapi::CloseHandle,
+        synchapi::{
+            CreateEventA, ReleaseSemaphore, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+        },
+        winbase::{CreateSemaphoreA, OpenSemaphoreA, INFINITE, WAIT_OBJECT_0},
+        winnt::{HANDLE, LONG, SEMAPHORE_MODIFY_STATE, SYNCHRONIZE},
+    },
+};
+
+const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
 
 #[derive(Debug)]
 pub struct Client {
@@ -15,107 +36,51 @@ pub struct Client {
 #[derive(Debug)]
 pub struct Acquired;
 
-type BOOL = i32;
-type DWORD = u32;
-type HANDLE = *mut u8;
-type LONG = i32;
-
-const ERROR_ALREADY_EXISTS: DWORD = 183;
-const FALSE: BOOL = 0;
-const INFINITE: DWORD = 0xffffffff;
-const SEMAPHORE_MODIFY_STATE: DWORD = 0x2;
-const SYNCHRONIZE: DWORD = 0x00100000;
-const TRUE: BOOL = 1;
-const WAIT_OBJECT_0: DWORD = 0;
-
-extern "system" {
-    fn CloseHandle(handle: HANDLE) -> BOOL;
-    fn SetEvent(hEvent: HANDLE) -> BOOL;
-    fn WaitForMultipleObjects(
-        ncount: DWORD,
-        lpHandles: *const HANDLE,
-        bWaitAll: BOOL,
-        dwMilliseconds: DWORD,
-    ) -> DWORD;
-    fn CreateEventA(
-        lpEventAttributes: *mut u8,
-        bManualReset: BOOL,
-        bInitialState: BOOL,
-        lpName: *const i8,
-    ) -> HANDLE;
-    fn ReleaseSemaphore(
-        hSemaphore: HANDLE,
-        lReleaseCount: LONG,
-        lpPreviousCount: *mut LONG,
-    ) -> BOOL;
-    fn CreateSemaphoreA(
-        lpEventAttributes: *mut u8,
-        lInitialCount: LONG,
-        lMaximumCount: LONG,
-        lpName: *const i8,
-    ) -> HANDLE;
-    fn OpenSemaphoreA(dwDesiredAccess: DWORD, bInheritHandle: BOOL, lpName: *const i8) -> HANDLE;
-    fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-    #[link_name = "SystemFunction036"]
-    fn RtlGenRandom(RandomBuffer: *mut u8, RandomBufferLength: u32) -> u8;
-}
-
-// Note that we ideally would use the `getrandom` crate, but unfortunately
-// that causes build issues when this crate is used in rust-lang/rust (see
-// rust-lang/rust#65014 for more information). As a result we just inline
-// the pretty simple Windows-specific implementation of generating
-// randomness.
-fn getrandom(dest: &mut [u8]) -> io::Result<()> {
-    // Prevent overflow of u32
-    for chunk in dest.chunks_mut(u32::max_value() as usize) {
-        let ret = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
-        if ret == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "failed to generate random bytes",
-            ));
-        }
-    }
-    Ok(())
-}
-
 impl Client {
     pub fn new(limit: usize) -> io::Result<Client> {
-        // Try a bunch of random semaphore names until we get a unique one,
-        // but don't try for too long.
-        //
+        let limit: LONG = limit
+            .try_into()
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+
         // Note that `limit == 0` is a valid argument above but Windows
         // won't let us create a semaphore with 0 slots available to it. Get
         // `limit == 0` working by creating a semaphore instead with one
         // slot and then immediately acquire it (without ever releaseing it
         // back).
+        let create_limit: LONG = if limit == 0 { 1 } else { limit };
+
+        // Try a bunch of random semaphore names until we get a unique one,
+        // but don't try for too long.
         for _ in 0..100 {
             let mut bytes = [0; 4];
             getrandom(&mut bytes)?;
-            let mut name = format!("__rust_jobserver_semaphore_{}\0", u32::from_ne_bytes(bytes));
-            unsafe {
-                let create_limit = if limit == 0 { 1 } else { limit };
-                let r = CreateSemaphoreA(
-                    ptr::null_mut(),
-                    create_limit as LONG,
-                    create_limit as LONG,
-                    name.as_ptr() as *const _,
-                );
-                if r.is_null() {
-                    return Err(io::Error::last_os_error());
-                }
-                let handle = Handle(r);
 
-                let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(ERROR_ALREADY_EXISTS as i32) {
-                    continue;
+            let mut name = format!("__rust_jobslot_semaphore_{}\0", u32::from_ne_bytes(bytes));
+            let res = unsafe {
+                Handle::new_or_err(CreateSemaphoreA(
+                    ptr::null_mut(),
+                    create_limit,
+                    create_limit,
+                    name.as_ptr() as *const _,
+                ))
+            };
+
+            match res {
+                Ok(sem) => {
+                    name.pop(); // chop off the trailing nul
+                    let client = Client { sem, name };
+                    if create_limit != limit {
+                        client.acquire()?;
+                    }
+                    return Ok(client);
                 }
-                name.pop(); // chop off the trailing nul
-                let client = Client { sem: handle, name };
-                if create_limit != limit {
-                    client.acquire()?;
+                Err(err) => {
+                    if err.raw_os_error() == Some(ERROR_ALREADY_EXISTS.try_into().unwrap()) {
+                        continue;
+                    } else {
+                        return Err(err);
+                    }
                 }
-                return Ok(client);
             }
         }
 
@@ -126,25 +91,18 @@ impl Client {
     }
 
     pub unsafe fn open(s: &str) -> Option<Client> {
-        let name = match CString::new(s) {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
+        let name = CString::new(s).ok()?;
 
         let sem = OpenSemaphoreA(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, name.as_ptr());
-        if sem.is_null() {
-            None
-        } else {
-            Some(Client {
-                sem: Handle(sem),
-                name: s.to_string(),
-            })
-        }
+        Handle::new(sem).map(|sem| Client {
+            sem,
+            name: s.to_string(),
+        })
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {
         unsafe {
-            let r = WaitForSingleObject(self.sem.0, INFINITE);
+            let r = WaitForSingleObject(self.sem.0.as_ptr(), INFINITE);
             if r == WAIT_OBJECT_0 {
                 Ok(Acquired)
             } else {
@@ -155,7 +113,7 @@ impl Client {
 
     pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
         unsafe {
-            let r = ReleaseSemaphore(self.sem.0, 1, ptr::null_mut());
+            let r = ReleaseSemaphore(self.sem.0.as_ptr(), 1, ptr::null_mut());
             if r != 0 {
                 Ok(())
             } else {
@@ -176,15 +134,26 @@ impl Client {
 }
 
 #[derive(Debug)]
-struct Handle(HANDLE);
-// HANDLE is a raw ptr, but we're send/sync
+#[repr(transparent)]
+struct Handle(NonNull<c_void>);
+
+impl Handle {
+    unsafe fn new(handle: HANDLE) -> Option<Self> {
+        NonNull::new(handle).map(Self)
+    }
+
+    unsafe fn new_or_err(handle: HANDLE) -> Result<Self, io::Error> {
+        Self::new(handle).ok_or_else(io::Error::last_os_error)
+    }
+}
+
 unsafe impl Sync for Handle {}
 unsafe impl Send for Handle {}
 
 impl Drop for Handle {
     fn drop(&mut self) {
         unsafe {
-            CloseHandle(self.0);
+            CloseHandle(self.0.as_ptr());
         }
     }
 }
@@ -202,18 +171,13 @@ pub(crate) fn spawn_helper(
 ) -> io::Result<Helper> {
     let event = unsafe {
         let r = CreateEventA(ptr::null_mut(), TRUE, FALSE, ptr::null());
-        if r.is_null() {
-            return Err(io::Error::last_os_error());
-        } else {
-            Handle(r)
-        }
-    };
+        Handle::new_or_err(r)
+    }?;
     let event = Arc::new(event);
-    let event2 = event.clone();
+    let event2 = Arc::clone(&event);
     let thread = Builder::new().spawn(move || {
-        let objects = [event2.0, client.inner.sem.0];
+        let objects = [event2.0.as_ptr(), client.inner.sem.0.as_ptr()];
         state.for_each_request(|_| {
-            const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
             match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) } {
                 WAIT_OBJECT_0 => return,
                 WAIT_OBJECT_1 => f(Ok(crate::Acquired {
@@ -236,7 +200,7 @@ impl Helper {
         // with a different event that it's also waiting on here. After
         // these two we should be guaranteed the thread is on its way out,
         // so we can safely `join`.
-        let r = unsafe { SetEvent(self.event.0) };
+        let r = unsafe { SetEvent(self.event.0.as_ptr()) };
         if r == 0 {
             panic!("failed to set event: {}", io::Error::last_os_error());
         }

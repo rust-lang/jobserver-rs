@@ -29,6 +29,12 @@ First, add this to your `Cargo.toml`:
 jobslot = "0.2.4"
 ```
 
+## Use of this crate in rustc
+
+This crate uses `getrandom` v0.2.7 on windows.
+If you want to use this crate in rustc, make sure to bump `getrandom` to v0.2
+to avoid pulling in different major versions of the same crate.
+
 # License
 
 This project is licensed under either of

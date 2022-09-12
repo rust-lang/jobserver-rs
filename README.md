@@ -20,6 +20,12 @@ An implementation of the GNU make jobserver for Rust
 [this PR]: https://github.com/alexcrichton/jobserver-rs/pull/40#issuecomment-1195689752
 [`std::os::unix::process::CommandExt::pre_exec`]: https://doc.rust-lang.org/std/os/unix/process/trait.CommandExt.html#tymethod.pre_exec
 
+## Other improvements in `jobslot`
+
+ - Remove use of signal handling in the helper thread on unix
+ - Use `winapi` on windows instead of manually declaring bindings (some of the bindings seem to be wrong)
+ - Use `getrandom` on windows instead of making homebrew one using raw windows api
+
 ## Usage
 
 First, add this to your `Cargo.toml`:

@@ -192,43 +192,6 @@ pub struct Client {
     inner: Arc<imp::Client>,
 }
 
-/// An acquired token from a jobserver.
-///
-/// This token will be released back to the jobserver when it is dropped and
-/// otherwise represents the ability to spawn off another thread of work.
-#[derive(Debug)]
-pub struct Acquired {
-    client: Arc<imp::Client>,
-    data: imp::Acquired,
-    disabled: bool,
-}
-
-impl Acquired {
-    /// This drops the `Acquired` token without releasing the associated token.
-    ///
-    /// This is not generally useful, but can be helpful if you do not have the
-    /// ability to store an Acquired token but need to not yet release it.
-    ///
-    /// You'll typically want to follow this up with a call to `release_raw` or
-    /// similar to actually release the token later on.
-    pub fn drop_without_releasing(mut self) {
-        self.disabled = true;
-    }
-}
-
-#[derive(Default, Debug)]
-struct HelperState {
-    lock: Mutex<HelperInner>,
-    cvar: Condvar,
-}
-
-#[derive(Default, Debug)]
-struct HelperInner {
-    requests: usize,
-    producer_done: bool,
-    consumer_done: bool,
-}
-
 impl Client {
     /// Creates a new jobserver initialized with the given parallelism limit.
     ///
@@ -333,11 +296,7 @@ impl Client {
     /// was not acquired.
     pub fn acquire(&self) -> io::Result<Acquired> {
         let data = self.inner.acquire()?;
-        Ok(Acquired {
-            client: self.inner.clone(),
-            data,
-            disabled: false,
-        })
+        Ok(Acquired::new(self, data))
     }
 
     /// Configures a child process to have access to this client's jobserver as
@@ -544,10 +503,40 @@ impl Client {
     }
 }
 
+/// An acquired token from a jobserver.
+///
+/// This token will be released back to the jobserver when it is dropped and
+/// otherwise represents the ability to spawn off another thread of work.
+#[derive(Debug)]
+pub struct Acquired {
+    client: Option<Arc<imp::Client>>,
+    data: imp::Acquired,
+}
+
+impl Acquired {
+    fn new(client: &Client, data: imp::Acquired) -> Self {
+        Self {
+            client: Some(client.inner.clone()),
+            data,
+        }
+    }
+
+    /// This drops the `Acquired` token without releasing the associated token.
+    ///
+    /// This is not generally useful, but can be helpful if you do not have the
+    /// ability to store an Acquired token but need to not yet release it.
+    ///
+    /// You'll typically want to follow this up with a call to `release_raw` or
+    /// similar to actually release the token later on.
+    pub fn drop_without_releasing(mut self) {
+        self.client = None;
+    }
+}
+
 impl Drop for Acquired {
     fn drop(&mut self) {
-        if !self.disabled {
-            drop(self.client.release(Some(&self.data)));
+        if let Some(client) = self.client.take() {
+            drop(client.release(Some(&self.data)));
         }
     }
 }
@@ -596,6 +585,19 @@ impl HelperThread {
     }
 }
 
+#[derive(Default, Debug)]
+struct HelperState {
+    lock: Mutex<HelperInner>,
+    cvar: Condvar,
+}
+
+#[derive(Default, Debug)]
+struct HelperInner {
+    requests: usize,
+    producer_done: bool,
+    consumer_done: bool,
+}
+
 impl HelperState {
     fn lock(&self) -> MutexGuard<'_, HelperInner> {
         self.lock.lock().unwrap_or_else(|e| e.into_inner())
@@ -638,9 +640,12 @@ impl HelperState {
     }
 }
 
-#[test]
-fn no_helper_deadlock() {
-    let x = crate::Client::new(32).unwrap();
-    let _y = x.clone();
-    std::mem::drop(x.into_helper_thread(|_| {}).unwrap());
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn no_helper_deadlock() {
+        let x = crate::Client::new(32).unwrap();
+        let _y = x.clone();
+        std::mem::drop(x.into_helper_thread(|_| {}).unwrap());
+    }
 }

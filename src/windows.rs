@@ -101,24 +101,20 @@ impl Client {
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {
-        unsafe {
-            let r = WaitForSingleObject(self.sem.0.as_ptr(), INFINITE);
-            if r == WAIT_OBJECT_0 {
-                Ok(Acquired)
-            } else {
-                Err(io::Error::last_os_error())
-            }
+        let r = unsafe { WaitForSingleObject(self.sem.0.as_ptr(), INFINITE) };
+        if r == WAIT_OBJECT_0 {
+            Ok(Acquired)
+        } else {
+            Err(io::Error::last_os_error())
         }
     }
 
     pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
-        unsafe {
-            let r = ReleaseSemaphore(self.sem.0.as_ptr(), 1, ptr::null_mut());
-            if r != 0 {
-                Ok(())
-            } else {
-                Err(io::Error::last_os_error())
-            }
+        let r = unsafe { ReleaseSemaphore(self.sem.0.as_ptr(), 1, ptr::null_mut()) };
+        if r != 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
         }
     }
 
@@ -178,15 +174,13 @@ pub(crate) fn spawn_helper(
     let thread = Builder::new().spawn(move || {
         let objects = [event2.0.as_ptr(), client.inner.sem.0.as_ptr()];
         state.for_each_request(|_| {
-            match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) } {
+            let res = match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) }
+            {
                 WAIT_OBJECT_0 => return,
-                WAIT_OBJECT_1 => f(Ok(crate::Acquired {
-                    client: client.inner.clone(),
-                    data: Acquired,
-                    disabled: false,
-                })),
-                _ => f(Err(io::Error::last_os_error())),
-            }
+                WAIT_OBJECT_1 => Ok(crate::Acquired::new(&client, Acquired)),
+                _ => Err(io::Error::last_os_error()),
+            };
+            f(res)
         });
     })?;
     Ok(Helper { thread, event })

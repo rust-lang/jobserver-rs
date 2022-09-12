@@ -185,11 +185,7 @@ pub(crate) fn spawn_helper(
             if let Some(res) =
                 helper_thread_loop(helper, &client.inner, &mut shutdown_rx).transpose()
             {
-                f(res.map(|data| crate::Acquired {
-                    client: client.inner.clone(),
-                    data,
-                    disabled: false,
-                }))
+                f(res.map(|data| crate::Acquired::new(&client, data)))
             }
         });
     })?;
@@ -240,6 +236,8 @@ impl Helper {
         drop(self.thread.join());
     }
 }
+
+// start of syscalls
 
 /// Return fds that are nonblocking and cloexec
 fn create_pipe(nonblocking: bool) -> io::Result<[RawFd; 2]> {

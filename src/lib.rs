@@ -17,6 +17,17 @@
 //! run child work, and clients using this crate should take care to implement
 //! such details to ensure correct interoperation with `make` itself.
 //!
+//! ## Advantages over `jobserver`?
+//!
+//!  - `jobslot` contains bug fix for [Client::configure is unsafe]
+//!  - `jobslot` removed use of signal handling in the helper thread on unix
+//!  - `jobslot` uses `winapi` on windows instead of manually declaring bindings (some of the bindings seem to be wrong)
+//!  - `jobslot` uses `getrandom` on windows instead of making homebrew one using raw windows api
+//!  - `jobslot::Client::from_env` can be called any number of times.
+//!
+//! [Client::configure is unsafe]: https://github.com/alexcrichton/jobserver-rs/issues/25
+//!
+//!
 //! ## Examples
 //!
 //! Connect to a jobserver that was set up by `make` or a different process:
@@ -296,8 +307,8 @@ impl Client {
     /// make sure to take ownership properly of the file descriptors passed
     /// down, if any.
     ///
-    /// Note, though, that on Windows it should be safe to call this function
-    /// any number of times.
+    /// Note, though, that on Windows and Unix it should be safe to
+    /// call this function any number of times.
     pub unsafe fn from_env() -> Option<Client> {
         let var = env::var("CARGO_MAKEFLAGS")
             .or_else(|_| env::var("MAKEFLAGS"))

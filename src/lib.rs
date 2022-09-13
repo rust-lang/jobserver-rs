@@ -118,8 +118,6 @@ cfg_if! {
     }
 }
 
-mod utils;
-
 /// Command that can be accepted by this crate.
 pub trait Command {
     /// Inserts or updates an environment variable mapping.
@@ -130,6 +128,19 @@ pub trait Command {
 
     /// Removes an environment variable mapping.
     fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self;
+
+    /// Schedules a closure to be run just before the exec function is invoked.
+    ///
+    /// Check [`std::os::unix::process::CommandExt::pre_exec`]
+    /// for more information.
+    ///
+    /// # Safety
+    ///
+    /// Same as [`std::os::unix::process::CommandExt::pre_exec`].
+    #[cfg(unix)]
+    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self
+    where
+        F: FnMut() -> io::Result<()> + Send + Sync + 'static;
 }
 impl Command for process::Command {
     fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
@@ -142,6 +153,15 @@ impl Command for process::Command {
 
     fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self {
         process::Command::env_remove(self, key.as_ref())
+    }
+
+    #[cfg(unix)]
+    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self
+    where
+        F: FnMut() -> io::Result<()> + Send + Sync + 'static,
+    {
+        use std::os::unix::process::CommandExt;
+        CommandExt::pre_exec(self, f)
     }
 }
 #[cfg(feature = "tokio")]
@@ -157,6 +177,14 @@ impl Command for tokio::process::Command {
     fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self {
         tokio::process::Command::env_remove(self, key.as_ref())
     }
+
+    #[cfg(unix)]
+    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self
+    where
+        F: FnMut() -> io::Result<()> + Send + Sync + 'static,
+    {
+        tokio::process::Command::pre_exec(self, f)
+    }
 }
 impl<T: Command> Command for &mut T {
     fn env<K, V>(&mut self, key: K, val: V) -> &mut Self
@@ -170,6 +198,15 @@ impl<T: Command> Command for &mut T {
 
     fn env_remove<K: AsRef<ffi::OsStr>>(&mut self, key: K) -> &mut Self {
         (*self).env_remove(key.as_ref());
+        self
+    }
+
+    #[cfg(unix)]
+    unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Self
+    where
+        F: FnMut() -> io::Result<()> + Send + Sync + 'static,
+    {
+        (*self).pre_exec(f);
         self
     }
 }
@@ -369,10 +406,11 @@ impl Client {
         Cmd: Command,
         F: FnOnce(&mut Cmd) -> io::Result<R>,
     {
-        // Setup fd on unix, do nothing on windows.
-        let this = self.inner.make_inheritable()?;
+        // Register one-time callback on unix to unset CLO_EXEC
+        // in child process.
+        self.inner.pre_run(&mut cmd);
 
-        let arg = this.string_arg();
+        let arg = self.inner.string_arg();
         // Older implementations of make use `--jobserver-fds` and newer
         // implementations use `--jobserver-auth`, pass both to try to catch
         // both implementations.

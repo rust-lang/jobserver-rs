@@ -12,7 +12,7 @@ use std::{
     thread::{Builder, JoinHandle},
 };
 
-use crate::utils::MaybeOwned;
+use crate::Command;
 
 /// Lowest file descriptor used in `Selector::try_clone`.
 ///
@@ -149,15 +149,27 @@ impl Client {
         ))
     }
 
-    pub fn make_inheritable(&self) -> io::Result<MaybeOwned<'_, Self>> {
-        // Dup automatically reset CLOEXEC flags
-        let read = dup(self.read.as_raw_fd())?;
-        let write = dup(self.write.as_raw_fd())?;
+    pub fn pre_run<Cmd>(&self, cmd: &mut Cmd)
+    where
+        Cmd: Command,
+    {
+        let read = self.read.as_raw_fd();
+        let write = self.write.as_raw_fd();
 
-        let read = unsafe { File::from_raw_fd(read) };
-        let write = unsafe { File::from_raw_fd(write) };
+        let mut fds = Some([read, write]);
 
-        Ok(MaybeOwned::Owned(Self { read, write }))
+        let f = move || {
+            // Make sure this function is executed only once,
+            // so that the command may be reused with another
+            // Client.
+            for fd in fds.take().iter().flatten() {
+                set_cloexec(*fd, false)?;
+            }
+
+            Ok(())
+        };
+
+        unsafe { cmd.pre_exec(f) };
     }
 }
 

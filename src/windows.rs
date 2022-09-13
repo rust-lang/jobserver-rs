@@ -25,6 +25,8 @@ use winapi::{
     },
 };
 
+use crate::Command;
+
 const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
 
 #[derive(Debug)]
@@ -122,10 +124,12 @@ impl Client {
         Cow::Borrowed(&self.name)
     }
 
-    pub fn make_inheritable(&self) -> io::Result<crate::utils::MaybeOwned<'_, Self>> {
+    pub fn pre_run<Cmd>(&self, _cmd: &mut Cmd)
+    where
+        Cmd: Command,
+    {
         // nothing to do here, we gave the name of our semaphore to the
         // child above
-        Ok(crate::utils::MaybeOwned::Borrowed(self))
     }
 }
 

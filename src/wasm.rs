@@ -5,7 +5,7 @@ use std::{
     thread::{Builder, JoinHandle},
 };
 
-use crate::utils::MaybeOwned;
+use crate::Command;
 
 #[derive(Debug)]
 pub struct Client {
@@ -63,7 +63,10 @@ impl Client {
         );
     }
 
-    pub fn make_inheritable(&self) -> io::Result<MaybeOwned<'_, Self>> {
+    pub fn pre_run<Cmd>(&self, cmd: &mut Cmd)
+    where
+        Cmd: Command,
+    {
         panic!(
             "On this platform there is no cross process jobserver support,
              so Client::configure_and_run is not supported."

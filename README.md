@@ -9,22 +9,12 @@ An implementation of the GNU make jobserver for Rust
 
 [Documentation](https://docs.rs/jobslot)
 
-## Why fork `jobserver`?
+## Advantages over `jobserver`?
 
- - `jobserver`'s maintainer @alexcrichton is not willing to merge [this PR] for
-   bug fix because it would change its interface.
- - Better performance on unix: `jobserver`'s implementation uses
-   [`std::os::unix::process::CommandExt::pre_exec`], which prevents `Command::spawn`
-   from using `vfork` on unix.
-
-[this PR]: https://github.com/alexcrichton/jobserver-rs/pull/40#issuecomment-1195689752
-[`std::os::unix::process::CommandExt::pre_exec`]: https://doc.rust-lang.org/std/os/unix/process/trait.CommandExt.html#tymethod.pre_exec
-
-## Other improvements in `jobslot`
-
- - Remove use of signal handling in the helper thread on unix
- - Use `winapi` on windows instead of manually declaring bindings (some of the bindings seem to be wrong)
- - Use `getrandom` on windows instead of making homebrew one using raw windows api
+ - `jobslot` contains bug fix for [Client::configure is unsafe]
+ - `jobslot` removed use of signal handling in the helper thread on unix
+ - `jobslot` uses `winapi` on windows instead of manually declaring bindings (some of the bindings seem to be wrong)
+ - `jobslot` uses `getrandom` on windows instead of making homebrew one using raw windows api
 
 ## Usage
 
@@ -32,7 +22,7 @@ First, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-jobslot = "0.2.4"
+jobslot = "0.2"
 ```
 
 ## Use of this crate in rustc

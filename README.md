@@ -16,6 +16,8 @@ An implementation of the GNU make jobserver for Rust
  - `jobslot` uses `winapi` on windows instead of manually declaring bindings (some of the bindings seem to be wrong)
  - `jobslot` uses `getrandom` on windows instead of making homebrew one using raw windows api
 
+[Client::configure is unsafe]: https://github.com/alexcrichton/jobserver-rs/issues/25
+
 ## Usage
 
 First, add this to your `Cargo.toml`:

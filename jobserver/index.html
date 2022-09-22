@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="An implementation of the GNU make jobserver."><meta name="keywords" content="rust, rustlang, rust-lang, jobserver"><title>jobserver - Rust</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../SourceSerif4-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../FiraSans-Regular.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../FiraSans-Medium.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../SourceCodePro-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../SourceSerif4-Bold.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../SourceCodePro-Semibold.ttf.woff2"><link rel="stylesheet" type="text/css" href="../normalize.css"><link rel="stylesheet" type="text/css" href="../rustdoc.css" id="mainThemeStyle"><link rel="stylesheet" type="text/css" href="../ayu.css" disabled><link rel="stylesheet" type="text/css" href="../dark.css" disabled><link rel="stylesheet" type="text/css" href="../light.css" id="themeStyle"><script id="default-settings" ></script><script src="../storage.js"></script><script defer src="../crates.js"></script><script defer src="../main.js"></script><noscript><link rel="stylesheet" href="../noscript.css"></noscript><link rel="alternate icon" type="image/png" href="../favicon-16x16.png"><link rel="alternate icon" type="image/png" href="../favicon-32x32.png"><link rel="icon" type="image/svg+xml" href="../favicon.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="sidebar-logo" href="../jobserver/index.html"><div class="logo-container"><img class="rust-logo" src="../rust-logo.svg" alt="logo"></div></a><h2 class="location"></h2></nav><nav class="sidebar"><a class="sidebar-logo" href="../jobserver/index.html"><div class="logo-container"><img class="rust-logo" src="../rust-logo.svg" alt="logo"></div></a><h2 class="location"><a href="#">Crate jobserver</a></h2><div class="sidebar-elems"><div class="block"><ul><li class="version">Version 0.1.24</li><li><a id="all-types" href="all.html">All Items</a></li></ul></div><section><div class="block"><ul><li><a href="#structs">Structs</a></li></ul></div></section></div></nav><main><div class="width-limiter"><div class="sub-container"><a class="sub-logo-container" href="../jobserver/index.html"><img class="rust-logo" src="../rust-logo.svg" alt="logo"></a><nav class="sub"><form class="search-form"><div class="search-container"><span></span><input class="search-input" name="search" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><button type="button">?</button></div><div id="settings-menu" tabindex="-1"><a href="../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../wheel.svg"></a></div></div></form></nav></div><section id="main-content" class="content"><div class="main-heading"><h1 class="fqn"><span class="in-band">Crate <a class="mod" href="#">jobserver</a><button id="copy-path" onclick="copy_path(this)" title="Copy item path to clipboard"><img src="../clipboard.svg" width="19" height="18" alt="Copy item path"></button></span></h1><span class="out-of-band"><a class="srclink" href="../src/jobserver/lib.rs.html#1-541">source</a> · <a id="toggle-all-docs" href="javascript:void(0)" title="collapse all docs">[<span class="inner">&#x2212;</span>]</a></span></div><details class="rustdoc-toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>An implementation of the GNU make jobserver.</p>
+<p>This crate is an implementation, in Rust, of the GNU <code>make</code> jobserver for
+CLI tools that are interoperating with make or otherwise require some form
+of parallelism limiting across process boundaries. This was originally
+written for usage in Cargo to both (a) work when <code>cargo</code> is invoked from
+<code>make</code> (using <code>make</code>’s jobserver) and (b) work when <code>cargo</code> invokes build
+scripts, exporting a jobserver implementation for <code>make</code> processes to
+transitively use.</p>
+<p>The jobserver implementation can be found in <a href="http://make.mad-scientist.net/papers/jobserver-implementation/">detail online</a> but
+basically boils down to a cross-process semaphore. On Unix this is
+implemented with the <code>pipe</code> syscall and read/write ends of a pipe and on
+Windows this is implemented literally with IPC semaphores.</p>
+<p>The jobserver protocol in <code>make</code> also dictates when tokens are acquired to
+run child work, and clients using this crate should take care to implement
+such details to ensure correct interoperation with <code>make</code> itself.</p>
+<h3 id="examples"><a href="#examples">Examples</a></h3>
+<p>Connect to a jobserver that was set up by <code>make</code> or a different process:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use</span> <span class="ident">jobserver::Client</span>;
+
+<span class="comment">// See API documentation for why this is `unsafe`</span>
+<span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="kw">match</span> <span class="kw">unsafe</span> { <span class="ident">Client::from_env</span>() } {
+    <span class="prelude-val">Some</span>(<span class="ident">client</span>) =&gt; <span class="ident">client</span>,
+    <span class="prelude-val">None</span> =&gt; <span class="macro">panic!</span>(<span class="string">&quot;client not configured&quot;</span>),
+};</code></pre></div>
+<p>Acquire and release token from a jobserver:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use</span> <span class="ident">jobserver::Client</span>;
+
+<span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="kw">unsafe</span> { <span class="ident">Client::from_env</span>().<span class="ident">unwrap</span>() };
+<span class="kw">let</span> <span class="ident">token</span> <span class="op">=</span> <span class="ident">client</span>.<span class="ident">acquire</span>().<span class="ident">unwrap</span>(); <span class="comment">// blocks until it is available</span>
+<span class="ident">drop</span>(<span class="ident">token</span>); <span class="comment">// releases the token when the work is done</span></code></pre></div>
+<p>Create a new jobserver and configure a child process to have access:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use</span> <span class="ident">std::process::Command</span>;
+<span class="kw">use</span> <span class="ident">jobserver::Client</span>;
+
+<span class="kw">let</span> <span class="ident">client</span> <span class="op">=</span> <span class="ident">Client::new</span>(<span class="number">4</span>).<span class="ident">expect</span>(<span class="string">&quot;failed to create jobserver&quot;</span>);
+<span class="kw">let</span> <span class="kw-2">mut</span> <span class="ident">cmd</span> <span class="op">=</span> <span class="ident">Command::new</span>(<span class="string">&quot;make&quot;</span>);
+<span class="ident">client</span>.<span class="ident">configure</span>(<span class="kw-2">&amp;mut</span> <span class="ident">cmd</span>);</code></pre></div>
+<h3 id="caveats"><a href="#caveats">Caveats</a></h3>
+<p>This crate makes no attempt to release tokens back to a jobserver on
+abnormal exit of a process. If a process which acquires a token is killed
+with ctrl-c or some similar signal then tokens will not be released and the
+jobserver may be in a corrupt state.</p>
+<p>Note that this is typically ok as ctrl-c means that an entire build process
+is being torn down, but it’s worth being aware of at least!</p>
+<h3 id="windows-caveats"><a href="#windows-caveats">Windows caveats</a></h3>
+<p>There appear to be two implementations of <code>make</code> on Windows. On MSYS2 one
+typically comes as <code>mingw32-make</code> and the other as <code>make</code> itself. I’m not
+personally too familiar with what’s going on here, but for jobserver-related
+information the <code>mingw32-make</code> implementation uses Windows semaphores
+whereas the <code>make</code> program does not. The <code>make</code> program appears to use file
+descriptors and I’m not really sure how it works, so this crate is not
+compatible with <code>make</code> on Windows. It is, however, compatible with
+<code>mingw32-make</code>.</p>
+</div></details><h2 id="structs" class="small-section-header"><a href="#structs">Structs</a></h2><div class="item-table"><div class="item-row"><div class="item-left module-item"><a class="struct" href="struct.Acquired.html" title="jobserver::Acquired struct">Acquired</a></div><div class="item-right docblock-short"><p>An acquired token from a jobserver.</p>
+</div></div><div class="item-row"><div class="item-left module-item"><a class="struct" href="struct.Client.html" title="jobserver::Client struct">Client</a></div><div class="item-right docblock-short"><p>A client of a jobserver</p>
+</div></div><div class="item-row"><div class="item-left module-item"><a class="struct" href="struct.HelperThread.html" title="jobserver::HelperThread struct">HelperThread</a></div><div class="item-right docblock-short"><p>Structure returned from <code>Client::into_helper_thread</code> to manage the lifetime
+of the helper thread returned, see those associated docs for more info.</p>
+</div></div></div></section></div></main><div id="rustdoc-vars" data-root-path="../" data-current-crate="jobserver" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.64.0 (a55dd71d5 2022-09-19)" ></div></body></html>

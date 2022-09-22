@@ -3,6 +3,7 @@ use libc::c_int;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
+use std::mem::MaybeUninit;
 use std::os::unix::prelude::*;
 use std::process::Command;
 use std::ptr;
@@ -202,6 +203,12 @@ impl Client {
 
     pub fn string_arg(&self) -> String {
         format!("{},{}", self.read.as_raw_fd(), self.write.as_raw_fd())
+    }
+
+    pub fn available(&self) -> io::Result<usize> {
+        let mut len = MaybeUninit::<c_int>::uninit();
+        cvt(unsafe { libc::ioctl(self.read.as_raw_fd(), libc::FIONREAD, len.as_mut_ptr()) })?;
+        Ok(unsafe { len.assume_init() } as usize)
     }
 
     pub fn configure(&self, cmd: &mut Command) {

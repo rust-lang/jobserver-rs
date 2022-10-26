@@ -243,7 +243,14 @@ pub(crate) fn spawn_helper(
     let mut err = None;
     USR1_INIT.call_once(|| unsafe {
         let mut new: libc::sigaction = mem::zeroed();
-        new.sa_sigaction = sigusr1_handler as usize;
+        #[cfg(target_os = "aix")]
+        {
+            new.sa_union.__su_sigaction = sigusr1_handler;
+        }
+        #[cfg(not(target_os = "aix"))]
+        {
+            new.sa_sigaction = sigusr1_handler as usize;
+        }
         new.sa_flags = libc::SA_SIGINFO as _;
         if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
             err = Some(io::Error::last_os_error());

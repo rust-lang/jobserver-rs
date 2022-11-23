@@ -3,27 +3,28 @@ use std::{
     convert::TryInto,
     ffi::CString,
     io,
-    os::raw::c_void,
-    ptr::{self, NonNull},
+    num::NonZeroIsize,
+    ptr,
     sync::Arc,
     thread::{Builder, JoinHandle},
 };
 
 use getrandom::getrandom;
-use winapi::{
-    shared::{
-        minwindef::{BOOL, DWORD, FALSE, TRUE},
-        winerror::ERROR_ALREADY_EXISTS,
-    },
-    um::{
-        handleapi::CloseHandle,
-        synchapi::{
-            CreateEventA, ReleaseSemaphore, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, BOOL, ERROR_ALREADY_EXISTS, HANDLE as RawHandle, WAIT_OBJECT_0},
+    System::{
+        Threading::{
+            CreateEventA, CreateSemaphoreA, ReleaseSemaphore, SetEvent, WaitForMultipleObjects,
+            WaitForSingleObject, SEMAPHORE_MODIFY_STATE, THREAD_SYNCHRONIZE as SYNCHRONIZE,
         },
-        winbase::{CreateSemaphoreA, OpenSemaphoreA, INFINITE, WAIT_OBJECT_0},
-        winnt::{HANDLE, LONG, SEMAPHORE_MODIFY_STATE, SYNCHRONIZE},
+        WindowsProgramming::{OpenSemaphoreA, INFINITE},
     },
 };
+
+type LONG = i32;
+
+const TRUE: BOOL = 1 as BOOL;
+const FALSE: BOOL = 0 as BOOL;
 
 use crate::Command;
 
@@ -63,7 +64,7 @@ impl Client {
                     ptr::null_mut(),
                     create_limit,
                     create_limit,
-                    name.as_ptr() as *const _,
+                    name.as_ptr(),
                 ))
             };
 
@@ -95,7 +96,11 @@ impl Client {
     pub unsafe fn open(s: &str) -> Option<Client> {
         let name = CString::new(s).ok()?;
 
-        let sem = OpenSemaphoreA(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, name.as_ptr());
+        let sem = OpenSemaphoreA(
+            SYNCHRONIZE | SEMAPHORE_MODIFY_STATE,
+            FALSE,
+            name.as_bytes().as_ptr(),
+        );
         Handle::new(sem).map(|sem| Client {
             sem,
             name: s.to_string(),
@@ -103,7 +108,7 @@ impl Client {
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {
-        let r = unsafe { WaitForSingleObject(self.sem.0.as_ptr(), INFINITE) };
+        let r = unsafe { WaitForSingleObject(self.sem.as_raw_handle(), INFINITE) };
         if r == WAIT_OBJECT_0 {
             Ok(Acquired)
         } else {
@@ -112,7 +117,7 @@ impl Client {
     }
 
     pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
-        let r = unsafe { ReleaseSemaphore(self.sem.0.as_ptr(), 1, ptr::null_mut()) };
+        let r = unsafe { ReleaseSemaphore(self.sem.as_raw_handle(), 1, ptr::null_mut()) };
         if r != 0 {
             Ok(())
         } else {
@@ -135,15 +140,19 @@ impl Client {
 
 #[derive(Debug)]
 #[repr(transparent)]
-struct Handle(NonNull<c_void>);
+struct Handle(NonZeroIsize);
 
 impl Handle {
-    unsafe fn new(handle: HANDLE) -> Option<Self> {
-        NonNull::new(handle).map(Self)
+    unsafe fn new(handle: RawHandle) -> Option<Self> {
+        NonZeroIsize::new(handle).map(Self)
     }
 
-    unsafe fn new_or_err(handle: HANDLE) -> Result<Self, io::Error> {
+    unsafe fn new_or_err(handle: RawHandle) -> Result<Self, io::Error> {
         Self::new(handle).ok_or_else(io::Error::last_os_error)
+    }
+
+    fn as_raw_handle(&self) -> RawHandle {
+        self.0.get()
     }
 }
 
@@ -153,7 +162,7 @@ unsafe impl Send for Handle {}
 impl Drop for Handle {
     fn drop(&mut self) {
         unsafe {
-            CloseHandle(self.0.as_ptr());
+            CloseHandle(self.as_raw_handle());
         }
     }
 }
@@ -176,7 +185,7 @@ pub(crate) fn spawn_helper(
     let event = Arc::new(event);
     let event2 = Arc::clone(&event);
     let thread = Builder::new().spawn(move || {
-        let objects = [event2.0.as_ptr(), client.inner.sem.0.as_ptr()];
+        let objects = [event2.as_raw_handle(), client.inner.sem.as_raw_handle()];
         state.for_each_request(|_| {
             let res = match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) }
             {
@@ -198,7 +207,7 @@ impl Helper {
         // with a different event that it's also waiting on here. After
         // these two we should be guaranteed the thread is on its way out,
         // so we can safely `join`.
-        let r = unsafe { SetEvent(self.event.0.as_ptr()) };
+        let r = unsafe { SetEvent(self.event.as_raw_handle()) };
         if r == 0 {
             panic!("failed to set event: {}", io::Error::last_os_error());
         }

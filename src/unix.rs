@@ -100,21 +100,19 @@ impl Client {
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {
-        // Ignore interrupts and keep trying if that happens
         loop {
             poll_for_readiness1(self.read.as_raw_fd())?;
 
+            // Ignore EINTR or EAGAIN and keep trying if that happens
             if let Some(token) = self.acquire_allow_interrupts()? {
                 return Ok(token);
             }
         }
     }
 
-    /// Nonblocking waiting for a token, returning `None` if we're interrupted with
-    /// EINTR or EAGAIN.
+    /// Waiting for a token in a non-blocking manner, returning `None`
+    /// if we're interrupted with EINTR or EAGAIN.
     fn acquire_allow_interrupts(&self) -> io::Result<Option<Acquired>> {
-        // Also note that we explicitly don't handle EINTR here. That's used
-        // to shut us down, so we otherwise punt all errors upwards.
         let mut buf = [0];
         match (&self.read).read(&mut buf) {
             Ok(1) => Ok(Some(Acquired { byte: buf[0] })),

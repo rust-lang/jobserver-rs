@@ -13,7 +13,7 @@ An implementation of the GNU make jobserver for Rust
 
  - `jobslot` contains bug fix for [Client::configure is unsafe]
  - `jobslot` removed use of signal handling in the helper thread on unix
- - `jobslot` uses `winapi` on windows instead of manually declaring bindings (some of the bindings seem to be wrong)
+ - `jobslot` uses `windows-sys` on windows instead of manually declaring bindings (some of the bindings seem to be wrong)
  - `jobslot` uses `getrandom` on windows instead of making homebrew one using raw windows api
  - `jobslot::Client::from_env` can be called any number of times on Windows and Unix.
 

@@ -25,6 +25,30 @@ fn server_multiple() {
 }
 
 #[test]
+fn server_available() {
+    let c = Client::new(10).unwrap();
+    assert_eq!(c.available().unwrap(), 10);
+    let a = c.acquire().unwrap();
+    assert_eq!(c.available().unwrap(), 9);
+    drop(a);
+    assert_eq!(c.available().unwrap(), 10);
+}
+
+#[test]
+fn server_none_available() {
+    let c = Client::new(2).unwrap();
+    assert_eq!(c.available().unwrap(), 2);
+    let a = c.acquire().unwrap();
+    assert_eq!(c.available().unwrap(), 1);
+    let b = c.acquire().unwrap();
+    assert_eq!(c.available().unwrap(), 0);
+    drop(a);
+    assert_eq!(c.available().unwrap(), 1);
+    drop(b);
+    assert_eq!(c.available().unwrap(), 2);
+}
+
+#[test]
 fn server_blocks() {
     let c = Client::new(1).unwrap();
     let a = c.acquire().unwrap();

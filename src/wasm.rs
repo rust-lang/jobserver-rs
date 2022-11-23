@@ -72,6 +72,11 @@ impl Client {
              so Client::configure_and_run is not supported."
         );
     }
+
+    pub fn available(&self) -> io::Result<usize> {
+        let lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(*lock)
+    }
 }
 
 #[derive(Debug)]

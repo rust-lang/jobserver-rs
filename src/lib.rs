@@ -347,6 +347,19 @@ impl Client {
         Ok(Acquired::new(self, data))
     }
 
+    /// Returns amount of tokens in the read-side pipe.
+    ///
+    /// # Return value
+    ///
+    /// Number of bytes available to be read from the jobserver pipe
+    ///
+    /// # Errors
+    ///
+    /// Underlying errors from the ioctl will be passed up.
+    pub fn available(&self) -> io::Result<usize> {
+        self.inner.available()
+    }
+
     /// Configures a child process to have access to this client's jobserver as
     /// well and run the `f` which spawns the process.
     ///

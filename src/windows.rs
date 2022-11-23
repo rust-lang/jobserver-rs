@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     convert::TryInto,
     ffi::CString,
+    fmt::Write,
     io,
     num::NonZeroIsize,
     ptr,
@@ -54,11 +55,16 @@ impl Client {
 
         // Try a bunch of random semaphore names until we get a unique one,
         // but don't try for too long.
+        let prefix = "__rust_jobslot_semaphore_";
+
+        let mut name = prefix.to_string();
+
         for _ in 0..100 {
             let mut bytes = [0; 4];
             getrandom(&mut bytes)?;
 
-            let mut name = format!("__rust_jobslot_semaphore_{}\0", u32::from_ne_bytes(bytes));
+            write!(&mut name, "{}\0", u32::from_ne_bytes(bytes)).unwrap();
+
             let res = unsafe {
                 Handle::new_or_err(CreateSemaphoreA(
                     ptr::null_mut(),
@@ -79,6 +85,7 @@ impl Client {
                 }
                 Err(err) => {
                     if err.raw_os_error() == Some(ERROR_ALREADY_EXISTS.try_into().unwrap()) {
+                        name.truncate(prefix.len());
                         continue;
                     } else {
                         return Err(err);

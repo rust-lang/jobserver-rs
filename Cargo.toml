@@ -10,7 +10,7 @@ description = """
 An implementation of the GNU make jobserver for Rust
 """
 edition = "2018"
-rust-version = "1.53.0"
+rust-version = "1.54.0"
 
 # docs.rs-specific configuration, shamelessly copied from
 # https://stackoverflow.com/a/61417700/8375400.

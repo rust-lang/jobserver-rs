@@ -1,10 +1,11 @@
 use libc::c_int;
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::mem;
 use std::mem::MaybeUninit;
 use std::os::unix::prelude::*;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr;
 use std::sync::{Arc, Once};
@@ -12,9 +13,11 @@ use std::thread::{self, Builder, JoinHandle};
 use std::time::Duration;
 
 #[derive(Debug)]
-pub struct Client {
-    read: File,
-    write: File,
+pub enum Client {
+    /// `--jobserver-auth=R,W`
+    Pipe { read: File, write: File },
+    /// `--jobserver-auth=fifo:PATH`
+    Fifo { file: File, path: PathBuf },
 }
 
 #[derive(Debug)]
@@ -30,16 +33,18 @@ impl Client {
         // wrong!
         const BUFFER: [u8; 128] = [b'|'; 128];
 
-        set_nonblocking(client.write.as_raw_fd(), true)?;
+        let mut write = client.write();
+
+        set_nonblocking(write.as_raw_fd(), true)?;
 
         while limit > 0 {
             let n = limit.min(BUFFER.len());
 
-            (&client.write).write_all(&BUFFER[..n])?;
+            write.write_all(&BUFFER[..n])?;
             limit -= n;
         }
 
-        set_nonblocking(client.write.as_raw_fd(), false)?;
+        set_nonblocking(write.as_raw_fd(), false)?;
 
         Ok(client)
     }
@@ -77,6 +82,31 @@ impl Client {
     }
 
     pub unsafe fn open(s: &str) -> Option<Client> {
+        Client::from_fifo(s).or_else(|| Client::from_pipe(s))
+    }
+
+    /// `--jobserver-auth=fifo:PATH`
+    fn from_fifo(s: &str) -> Option<Client> {
+        let mut parts = s.splitn(2, ':');
+        if parts.next().unwrap() != "fifo" {
+            return None;
+        }
+        let path = match parts.next() {
+            Some(p) => Path::new(p),
+            None => return None,
+        };
+        let file = match OpenOptions::new().read(true).write(true).open(path) {
+            Ok(f) => f,
+            Err(_) => return None,
+        };
+        Some(Client::Fifo {
+            file,
+            path: path.into(),
+        })
+    }
+
+    /// `--jobserver-auth=R,W`
+    unsafe fn from_pipe(s: &str) -> Option<Client> {
         let mut parts = s.splitn(2, ',');
         let read = parts.next().unwrap();
         let write = match parts.next() {
@@ -110,9 +140,25 @@ impl Client {
     }
 
     unsafe fn from_fds(read: c_int, write: c_int) -> Client {
-        Client {
+        Client::Pipe {
             read: File::from_raw_fd(read),
             write: File::from_raw_fd(write),
+        }
+    }
+
+    /// Gets the read end of our jobserver client.
+    fn read(&self) -> &File {
+        match self {
+            Client::Pipe { read, .. } => read,
+            Client::Fifo { file, .. } => file,
+        }
+    }
+
+    /// Gets the write end of our jobserver client.
+    fn write(&self) -> &File {
+        match self {
+            Client::Pipe { write, .. } => write,
+            Client::Fifo { file, .. } => file,
         }
     }
 
@@ -150,11 +196,12 @@ impl Client {
         // to shut us down, so we otherwise punt all errors upwards.
         unsafe {
             let mut fd: libc::pollfd = mem::zeroed();
-            fd.fd = self.read.as_raw_fd();
+            let mut read = self.read();
+            fd.fd = read.as_raw_fd();
             fd.events = libc::POLLIN;
             loop {
                 let mut buf = [0];
-                match (&self.read).read(&mut buf) {
+                match read.read(&mut buf) {
                     Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
                     Ok(_) => {
                         return Err(io::Error::new(
@@ -192,7 +239,7 @@ impl Client {
         // always quickly release a token). If that turns out to not be the
         // case we'll get an error anyway!
         let byte = data.map(|d| d.byte).unwrap_or(b'+');
-        match (&self.write).write(&[byte])? {
+        match self.write().write(&[byte])? {
             1 => Ok(()),
             _ => Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -202,22 +249,31 @@ impl Client {
     }
 
     pub fn string_arg(&self) -> String {
-        format!("{},{}", self.read.as_raw_fd(), self.write.as_raw_fd())
+        match self {
+            Client::Pipe { read, write } => format!("{},{}", read.as_raw_fd(), write.as_raw_fd()),
+            Client::Fifo { path, .. } => format!("fifo:{}", path.to_str().unwrap()),
+        }
     }
 
     pub fn available(&self) -> io::Result<usize> {
         let mut len = MaybeUninit::<c_int>::uninit();
-        cvt(unsafe { libc::ioctl(self.read.as_raw_fd(), libc::FIONREAD, len.as_mut_ptr()) })?;
+        cvt(unsafe { libc::ioctl(self.read().as_raw_fd(), libc::FIONREAD, len.as_mut_ptr()) })?;
         Ok(unsafe { len.assume_init() } as usize)
     }
 
     pub fn configure(&self, cmd: &mut Command) {
+        match self {
+            // We `File::open`ed it when inheriting from environment,
+            // so no need to set cloexec for fifo.
+            Client::Fifo { .. } => return,
+            Client::Pipe { .. } => {}
+        };
         // Here we basically just want to say that in the child process
         // we'll configure the read/write file descriptors to *not* be
         // cloexec, so they're inherited across the exec and specified as
         // integers through `string_arg` above.
-        let read = self.read.as_raw_fd();
-        let write = self.write.as_raw_fd();
+        let read = self.read().as_raw_fd();
+        let write = self.write().as_raw_fd();
         unsafe {
             cmd.pre_exec(move || {
                 set_cloexec(read, false)?;

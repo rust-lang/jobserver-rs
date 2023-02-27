@@ -11,7 +11,10 @@
 //! The jobserver implementation can be found in [detail online][docs] but
 //! basically boils down to a cross-process semaphore. On Unix this is
 //! implemented with the `pipe` syscall and read/write ends of a pipe and on
-//! Windows this is implemented literally with IPC semaphores.
+//! Windows this is implemented literally with IPC semaphores. Starting from
+//! GNU `make` version 4.4, named pipe becomes the default way in communication
+//! on Unix. This crate also supports that feature in the sense of inheriting
+//! and forwarding the correct environment.
 //!
 //! The jobserver protocol in `make` also dictates when tokens are acquired to
 //! run child work, and clients using this crate should take care to implement

@@ -29,7 +29,28 @@ jobs:
     - name: Install Rust (rustup)
       run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
       shell: bash
+
     - run: cargo test
+
+    # Compile it from source (temporarily)
+    - name: Make GNU Make from source
+      if: ${{ !startsWith(matrix.os, 'windows') }}
+      env:
+        VERSION: "4.4.1"
+      shell: bash
+      run: |
+        wget -q "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz"
+        tar zxf "make-${VERSION}.tar.gz"
+        pushd "make-${VERSION}"
+        ./configure
+        make
+        popd
+        cp -rp "make-${VERSION}/make" .
+    - name: Test against GNU Make from source
+      if: ${{ !startsWith(matrix.os, 'windows') }}
+      shell: bash
+      run:
+        MAKE="${PWD}/make" cargo test
 
   rustfmt:
     name: Rustfmt

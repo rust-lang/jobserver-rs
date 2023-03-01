@@ -3,10 +3,11 @@ use libc::c_int;
 use std::{
     borrow::Cow,
     convert::TryInto,
-    fs::File,
+    fs::{self, File},
     io::{self, Read, Write},
     mem::MaybeUninit,
     os::unix::prelude::*,
+    path::Path,
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
     thread::{Builder, JoinHandle},
@@ -65,6 +66,37 @@ impl Client {
     }
 
     pub unsafe fn open(s: &str) -> Option<Client> {
+        if let Some(fifo) = s.strip_prefix("fifo:") {
+            Self::from_fifo(Path::new(fifo))
+        } else {
+            Self::from_pipe(s)
+        }
+    }
+
+    /// `--jobserver-auth=fifo:PATH`
+    fn from_fifo(path: &Path) -> Option<Self> {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .ok()?;
+
+        if is_pipe_without_access_mode_check(file.as_raw_fd()) {
+            // File in Rust is always closed-on-exec as long as it's opened by
+            // `File::open` or `fs::OpenOptions::open`.
+            set_nonblocking(file.as_raw_fd(), true).ok()?;
+
+            Some(Client {
+                read: file.try_clone().ok()?,
+                write: file,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// `--jobserver-auth=fd-for-R,fd-for-W`
+    unsafe fn from_pipe(s: &str) -> Option<Self> {
         let (read, write) = s.split_once(',')?;
 
         let read = read.parse().ok()?;
@@ -81,10 +113,9 @@ impl Client {
             let read = dup_with_cloexec(read).ok()?;
             let write = dup_with_cloexec(write).ok()?;
 
-            // Set read to nonblocking
+            // Set read and write end to nonblocking
             set_nonblocking(read, true).ok()?;
-            // Set write to blocking
-            set_nonblocking(write, false).ok()?;
+            set_nonblocking(write, true).ok()?;
 
             Some(Client::from_fds(read, write))
         } else {
@@ -130,8 +161,17 @@ impl Client {
     pub fn release(&self, data: Option<&Acquired>) -> io::Result<()> {
         // Note that the fd may be nonblocking but we're going to go ahead
         // and assume that the writes here are always nonblocking (we can
-        // always quickly release a token). If that turns out to not be the
-        // case we'll get an error anyway!
+        // always quickly release a token).
+        //
+        // For write to block, this would mean that pipe is full.
+        // If all every release are pair with an acquire, then this cannot
+        // happen.
+        //
+        // If it does happen, it is likely a bug in the program using this
+        // crate or some other programs that use the same jobserver have a
+        // bug in their  code
+        //
+        // If that turns out to not be the case we'll get an error anyway!
         let byte = data.map(|d| d.byte).unwrap_or(b'+');
         match (&self.write).write(&[byte])? {
             1 => Ok(()),
@@ -345,7 +385,7 @@ fn cvt(t: c_int) -> io::Result<c_int> {
     }
 }
 
-fn is_pipe(fd: RawFd, readable: bool) -> bool {
+fn is_pipe_without_access_mode_check(fd: RawFd) -> bool {
     let mut stat = MaybeUninit::<libc::stat>::uninit();
 
     if unsafe { libc::fstat(fd, stat.as_mut_ptr()) } == -1 {
@@ -356,8 +396,11 @@ fn is_pipe(fd: RawFd, readable: bool) -> bool {
     //
     // libc::fstat succeeds, stat is initialized
     let stat = unsafe { stat.assume_init() };
-    if (stat.st_mode & libc::S_IFMT) != libc::S_IFIFO {
-        // fd is not a pipe
+    (stat.st_mode & libc::S_IFMT) == libc::S_IFIFO
+}
+
+fn is_pipe(fd: RawFd, readable: bool) -> bool {
+    if !is_pipe_without_access_mode_check(fd) {
         return false;
     }
 

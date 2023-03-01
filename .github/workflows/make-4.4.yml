@@ -1,0 +1,54 @@
+name: test make-4.4
+on: [push, pull_request]
+
+env:
+  CARGO_UNSTABLE_SPARSE_REGISTRY: "true"
+  MAKE_VERSION: "4.4.1"
+
+jobs:
+  test:
+    name: Test using make 4.4.1
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        rust: [stable, beta, nightly]
+    steps:
+      - name: Cache make compiled
+        id: cache-make
+        uses: actions/cache@v3
+        with:
+          path: /usr/local/bin/make
+          key: ${{ runner.os }}-make-${{ env.MAKE_VERSION }}
+
+      # Compile it from source (temporarily)
+      - name: Make GNU Make from source
+        if: steps.cache-make.outputs.cache-hit != 'true'
+        run: |
+          curl "https://ftp.gnu.org/gnu/make/make-${MAKE_VERSION}.tar.gz" | tar xz
+          pushd "make-${MAKE_VERSION}"
+          ./configure
+          make
+          popd
+          cp -rp "make-${MAKE_VERSION}/make" /usr/local/bin
+
+      - name: Verify that we are using make 4.4.1
+        run: make -v | grep "GNU Make ${MAKE_VERSION}"
+
+      - uses: actions/checkout@v3
+      - name: Install Rust
+        run: |
+          rustup toolchain add ${{ matrix.rust }} nightly --no-self-update
+          rustup default ${{ matrix.rust }}
+      - name: Generate Cargo.lock
+        run: cargo +nightly update
+      - name: Configure caching
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: cargo-${{ matrix.os }}-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
+      - run: cargo test --all-features

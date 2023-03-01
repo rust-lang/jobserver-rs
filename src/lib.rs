@@ -13,6 +13,12 @@
 //! implemented with the `pipe` syscall and read/write ends of a pipe and on
 //! Windows this is implemented literally with IPC semaphores.
 //!
+//! Starting from GNU `make` version 4.4, named pipe becomes the default way
+//! in communication on Unix, which is supported by this crate.
+//!
+//! However, [`Client::configure_and_run`] and [`Client::configure_make_and_run`]
+//! still use the old syntax to keep backwards compatibility.
+//!
 //! The jobserver protocol in `make` also dictates when tokens are acquired to
 //! run child work, and clients using this crate should take care to implement
 //! such details to ensure correct interoperation with `make` itself.

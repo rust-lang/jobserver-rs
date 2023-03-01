@@ -316,20 +316,11 @@ impl Client {
     /// Note, though, that on Windows and Unix it should be safe to
     /// call this function any number of times.
     pub unsafe fn from_env() -> Option<Client> {
-        let var = env::var("CARGO_MAKEFLAGS")
-            .or_else(|_| env::var("MAKEFLAGS"))
-            .or_else(|_| env::var("MFLAGS"))
-            .ok()?;
+        let var = env::var_os("CARGO_MAKEFLAGS")
+            .or_else(|| env::var_os("MAKEFLAGS"))
+            .or_else(|| env::var_os("MFLAGS"))?;
 
-        let s = var
-            .split_ascii_whitespace()
-            .filter_map(|arg| {
-                arg.strip_prefix("--jobserver-fds=")
-                    .or_else(|| arg.strip_prefix("--jobserver-auth="))
-            })
-            .find(|s| !s.is_empty())?;
-
-        imp::Client::open(s).map(|c| Client { inner: Arc::new(c) })
+        imp::Client::open(var).map(|c| Client { inner: Arc::new(c) })
     }
 
     /// Acquires a token from this jobserver client.

@@ -3,13 +3,19 @@ use libc::c_int;
 use std::{
     borrow::Cow,
     convert::TryInto,
+    ffi::{OsStr, OsString},
     fs::{self, File},
     io::{self, Read, Write},
     mem::MaybeUninit,
-    os::unix::prelude::*,
+    os::unix::{
+        ffi::{OsStrExt, OsStringExt},
+        prelude::*,
+    },
     path::Path,
-    sync::atomic::{AtomicBool, Ordering},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread::{Builder, JoinHandle},
 };
 
@@ -65,11 +71,21 @@ impl Client {
         Ok(client)
     }
 
-    pub unsafe fn open(s: &str) -> Option<Client> {
-        if let Some(fifo) = s.strip_prefix("fifo:") {
-            Self::from_fifo(Path::new(fifo))
+    pub unsafe fn open(var: OsString) -> Option<Client> {
+        let bytes = var.into_vec();
+
+        let s = bytes
+            .split(u8::is_ascii_whitespace)
+            .filter_map(|arg| {
+                arg.strip_prefix(b"--jobserver-fds=")
+                    .or_else(|| arg.strip_prefix(b"--jobserver-auth="))
+            })
+            .find(|bytes| !bytes.is_empty())?;
+
+        if let Some(fifo) = s.strip_prefix(b"fifo:") {
+            Self::from_fifo(Path::new(OsStr::from_bytes(fifo)))
         } else {
-            Self::from_pipe(s)
+            Self::from_pipe(OsStr::from_bytes(s).to_str()?)
         }
     }
 

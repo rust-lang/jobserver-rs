@@ -29,7 +29,7 @@ fn main() {
         return;
     }
 
-    let c = Client::new(1).unwrap();
+    let c = Client::new_with_fifo(1).unwrap();
     let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
@@ -66,7 +66,7 @@ bar:
     // We're leaking one extra token to `make` sort of violating the makefile
     // jobserver protocol. It has the desired effect though.
     let mut child = c
-        .configure_make_and_run(&mut cmd, |cmd| cmd.spawn())
+        .configure_make_and_run_with_fifo(&mut cmd, |cmd| cmd.spawn())
         .unwrap();
 
     // We should get both connections as the two programs should be run

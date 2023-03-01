@@ -27,14 +27,16 @@ cfg-if = "1.0.0"
 tokio = { version = "1", default-features = false, features = ["process"], optional = true }
 scopeguard = "1.1.0"
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2.132"
-
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(unix, windows))'.dependencies]
 # Features: 
 #  - std: Implement std-only traits for getrandom::Error
 #  - rdrand: Enable fallback RDRAND-based implementation on x86/x86_64
 getrandom = { version = "0.2.7", features = ["std", "rdrand"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.132"
+
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.45.0", features = ["Win32_System_WindowsProgramming", "Win32_System_Threading", "Win32_Foundation", "Win32_Security"] }
 
 [dev-dependencies]

@@ -1,9 +1,8 @@
-use libc::c_int;
-
 use std::{
     borrow::Cow,
     convert::TryInto,
     ffi::{OsStr, OsString},
+    fmt::Write as _,
     fs::{self, File},
     io::{self, Read, Write},
     mem::MaybeUninit,
@@ -11,13 +10,16 @@ use std::{
         ffi::{OsStrExt, OsStringExt},
         prelude::*,
     },
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     thread::{Builder, JoinHandle},
 };
+
+use getrandom::getrandom;
+use libc::c_int;
 
 use crate::Command;
 
@@ -37,6 +39,10 @@ pub struct Client {
     read: File,
     /// This fd is set to be blocking
     write: File,
+    /// Path to the named fifo if any
+    path: Option<Box<Path>>,
+    /// If the Client owns the fifo, then we should remove it on drop.
+    owns_fifo: bool,
 }
 
 #[derive(Debug)]
@@ -45,12 +51,81 @@ pub struct Acquired {
 }
 
 impl Client {
-    pub fn new(mut limit: usize) -> io::Result<Client> {
+    pub fn new(limit: usize) -> io::Result<Self> {
         // Create nonblocking and cloexec pipes
         let pipes = create_pipe(true)?;
 
-        let client = unsafe { Client::from_fds(pipes[0], pipes[1]) };
+        let client = unsafe { Self::from_fds(pipes[0], pipes[1]) };
 
+        client.init(limit)?;
+
+        Ok(client)
+    }
+
+    pub fn new_fifo(limit: usize) -> io::Result<Self> {
+        // Try a bunch of random file name in /tmp until we get a unique one,
+        // but don't try for too long.
+        let prefix = "/tmp/__rust_jobslot_fifo_";
+
+        let mut name = String::with_capacity(
+            prefix.len() +
+            // 32B for the max size of u128
+            32 +
+            // 1B for the null byte
+            1,
+        );
+        name.push_str(prefix);
+
+        for _ in 0..100 {
+            let mut bytes = [0; 16];
+            getrandom(&mut bytes)?;
+
+            write!(&mut name, "{:x}\0", u128::from_ne_bytes(bytes)).unwrap();
+
+            let res = cvt(unsafe {
+                libc::mkfifo(name.as_ptr() as *const _, libc::S_IRUSR | libc::S_IWUSR)
+            });
+
+            match res {
+                Ok(_) => {
+                    name.pop(); // chop off the trailing null
+                    let name = PathBuf::from(name);
+
+                    let file = open_file_rw(&name)?;
+
+                    // File in Rust is always closed-on-exec as long as it's opened by
+                    // `File::open` or `fs::OpenOptions::open`.
+                    set_nonblocking(file.as_raw_fd(), true)?;
+
+                    let client = Self {
+                        read: file.try_clone()?,
+                        write: file,
+                        path: Some(name.into_boxed_path()),
+                        owns_fifo: true,
+                    };
+
+                    client.init(limit)?;
+
+                    return Ok(client);
+                }
+                Err(err) => {
+                    if err.kind() == io::ErrorKind::AlreadyExists {
+                        name.truncate(prefix.len());
+                        continue;
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "failed to find a unique name for a semaphore",
+        ))
+    }
+
+    fn init(&self, mut limit: usize) -> io::Result<()> {
         // I don't think the character written here matters, but I could be
         // wrong!
         const BUFFER: [u8; 128] = [b'|'; 128];
@@ -61,17 +136,14 @@ impl Client {
             // Use nonblocking write here so that if the pipe
             // would block, then return err instead of blocking
             // the entire process forever.
-            (&client.write).write_all(&BUFFER[..n])?;
+            (&self.write).write_all(&BUFFER[..n])?;
             limit -= n;
         }
 
-        // Set fd to be blocking
-        set_nonblocking(client.write.as_raw_fd(), false)?;
-
-        Ok(client)
+        Ok(())
     }
 
-    pub unsafe fn open(var: OsString) -> Option<Client> {
+    pub unsafe fn open(var: OsString) -> Option<Self> {
         let bytes = var.into_vec();
 
         let s = bytes
@@ -91,20 +163,18 @@ impl Client {
 
     /// `--jobserver-auth=fifo:PATH`
     fn from_fifo(path: &Path) -> Option<Self> {
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .ok()?;
+        let file = open_file_rw(path).ok()?;
 
         if is_pipe_without_access_mode_check(file.as_raw_fd()) {
             // File in Rust is always closed-on-exec as long as it's opened by
             // `File::open` or `fs::OpenOptions::open`.
             set_nonblocking(file.as_raw_fd(), true).ok()?;
 
-            Some(Client {
+            Some(Self {
                 read: file.try_clone().ok()?,
                 write: file,
+                path: Some(path.into()),
+                owns_fifo: false,
             })
         } else {
             None
@@ -133,16 +203,18 @@ impl Client {
             set_nonblocking(read, true).ok()?;
             set_nonblocking(write, true).ok()?;
 
-            Some(Client::from_fds(read, write))
+            Some(Self::from_fds(read, write))
         } else {
             None
         }
     }
 
-    unsafe fn from_fds(read: c_int, write: c_int) -> Client {
-        Client {
+    unsafe fn from_fds(read: c_int, write: c_int) -> Self {
+        Self {
             read: File::from_raw_fd(read),
             write: File::from_raw_fd(write),
+            path: None,
+            owns_fifo: false,
         }
     }
 
@@ -203,6 +275,10 @@ impl Client {
         ))
     }
 
+    pub fn get_fifo(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     pub fn pre_run<Cmd>(&self, cmd: &mut Cmd)
     where
         Cmd: Command,
@@ -230,6 +306,16 @@ impl Client {
         let mut len = MaybeUninit::<c_int>::uninit();
         cvt(unsafe { libc::ioctl(self.read.as_raw_fd(), libc::FIONREAD, len.as_mut_ptr()) })?;
         Ok(unsafe { len.assume_init() }.try_into().unwrap())
+    }
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        if let Some(path) = &self.path {
+            if self.owns_fifo {
+                fs::remove_file(path).ok();
+            }
+        }
     }
 }
 
@@ -494,4 +580,8 @@ fn is_ready(revents: libc::c_short) -> io::Result<bool> {
         )),
         _ => Ok(false),
     }
+}
+
+fn open_file_rw(file: &Path) -> io::Result<File> {
+    fs::OpenOptions::new().read(true).write(true).open(file)
 }

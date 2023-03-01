@@ -35,7 +35,7 @@ const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
 #[derive(Debug)]
 pub struct Client {
     sem: Handle,
-    name: String,
+    name: Box<str>,
 }
 
 #[derive(Debug)]
@@ -58,13 +58,20 @@ impl Client {
         // but don't try for too long.
         let prefix = "__rust_jobslot_semaphore_";
 
-        let mut name = prefix.to_string();
+        let mut name = String::with_capacity(
+            prefix.len() +
+            // 32B for the max size of u128
+            32 +
+            // 1B for the null byte
+            1,
+        );
+        name.push_str(prefix);
 
         for _ in 0..100 {
-            let mut bytes = [0; 4];
+            let mut bytes = [0; 16];
             getrandom(&mut bytes)?;
 
-            write!(&mut name, "{}\0", u32::from_ne_bytes(bytes)).unwrap();
+            write!(&mut name, "{}\0", u128::from_ne_bytes(bytes)).unwrap();
 
             let res = unsafe {
                 Handle::new_or_err(CreateSemaphoreA(
@@ -78,7 +85,10 @@ impl Client {
             match res {
                 Ok(sem) => {
                     name.pop(); // chop off the trailing nul
-                    let client = Client { sem, name };
+                    let client = Client {
+                        sem,
+                        name: name.into_boxed_str(),
+                    };
                     if create_limit != limit {
                         client.acquire()?;
                     }
@@ -120,7 +130,7 @@ impl Client {
         );
         Handle::new(sem).map(|sem| Client {
             sem,
-            name: s.to_string(),
+            name: s.into(),
         })
     }
 

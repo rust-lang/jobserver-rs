@@ -35,7 +35,7 @@ const TESTS: &[Test] = &[
         make_args: &[],
         rule: &|me| me.to_string(),
         f: &|| {
-            assert!(unsafe { Client::from_env().is_none() });
+            assert!(unsafe { Client::from_env().is_err() });
         },
     },
     Test {
@@ -43,7 +43,7 @@ const TESTS: &[Test] = &[
         make_args: &[],
         rule: &|me| format!("+{}", me),
         f: &|| {
-            assert!(unsafe { Client::from_env().is_none() });
+            assert!(unsafe { Client::from_env().is_err() });
         },
     },
     Test {
@@ -51,7 +51,7 @@ const TESTS: &[Test] = &[
         make_args: &["-j2"],
         rule: &|me| format!("+{}", me),
         f: &|| {
-            assert!(unsafe { Client::from_env().is_some() });
+            assert!(unsafe { Client::from_env().is_ok() });
         },
     },
     Test {

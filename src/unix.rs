@@ -25,6 +25,13 @@ pub struct Acquired {
     byte: u8,
 }
 
+#[derive(Debug)]
+pub enum ErrFromEnv {
+    ParseEnvVar,
+    OpenFile(String),
+    InvalidDescriptor(i32, i32),
+}
+
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
         let client = unsafe { Client::mk()? };
@@ -81,61 +88,66 @@ impl Client {
         Ok(Client::from_fds(pipes[0], pipes[1]))
     }
 
-    pub unsafe fn open(s: &str) -> Option<Client> {
-        Client::from_fifo(s).or_else(|| Client::from_pipe(s))
+    pub unsafe fn open(s: &str) -> Result<Client, ErrFromEnv> {
+        match (Self::from_fifo(s), Self::from_pipe(s)) {
+            (Some(result), None) | (None, Some(result)) => result,
+            (None, None) => Err(ErrFromEnv::ParseEnvVar),
+            (Some(_), Some(_)) => unreachable!(),
+        }
     }
 
     /// `--jobserver-auth=fifo:PATH`
-    fn from_fifo(s: &str) -> Option<Client> {
+    fn from_fifo(s: &str) -> Option<Result<Client, ErrFromEnv>> {
         let mut parts = s.splitn(2, ':');
         if parts.next().unwrap() != "fifo" {
             return None;
         }
         let path = match parts.next() {
             Some(p) => Path::new(p),
-            None => return None,
+            None => return Some(Err(ErrFromEnv::ParseEnvVar)),
         };
         let file = match OpenOptions::new().read(true).write(true).open(path) {
             Ok(f) => f,
-            Err(_) => return None,
+            Err(e) => return Some(Err(ErrFromEnv::OpenFile(e.to_string()))),
         };
-        Some(Client::Fifo {
+        Some(Ok(Client::Fifo {
             file,
             path: path.into(),
-        })
+        }))
     }
 
     /// `--jobserver-auth=R,W`
-    unsafe fn from_pipe(s: &str) -> Option<Client> {
+    unsafe fn from_pipe(s: &str) -> Option<Result<Client, ErrFromEnv>> {
         let mut parts = s.splitn(2, ',');
         let read = parts.next().unwrap();
         let write = match parts.next() {
             Some(s) => s,
-            None => return None,
+            None => return Some(Err(ErrFromEnv::ParseEnvVar)),
         };
 
         let read = match read.parse() {
             Ok(n) => n,
-            Err(_) => return None,
+            Err(_) => return Some(Err(ErrFromEnv::ParseEnvVar)),
         };
         let write = match write.parse() {
             Ok(n) => n,
-            Err(_) => return None,
+            Err(_) => return Some(Err(ErrFromEnv::ParseEnvVar)),
         };
 
         // Ok so we've got two integers that look like file descriptors, but
         // for extra sanity checking let's see if they actually look like
-        // instances of a pipe before we return the client.
+        // instances of a pipe if feature enabled or valid files otherwise
+        // before we return the client.
         //
         // If we're called from `make` *without* the leading + on our rule
         // then we'll have `MAKEFLAGS` env vars but won't actually have
         // access to the file descriptors.
-        if is_valid_fd(read) && is_valid_fd(write) {
+        if check_fd(read) && check_fd(write) {
             drop(set_cloexec(read, true));
             drop(set_cloexec(write, true));
-            Some(Client::from_fds(read, write))
+            Some(Ok(Client::from_fds(read, write)))
         } else {
-            None
+            Some(Err(ErrFromEnv::InvalidDescriptor(read, write)))
         }
     }
 
@@ -207,7 +219,7 @@ impl Client {
                         return Err(io::Error::new(
                             io::ErrorKind::Other,
                             "early EOF on jobserver pipe",
-                        ))
+                        ));
                     }
                     Err(e) => match e.kind() {
                         io::ErrorKind::WouldBlock => { /* fall through to polling */ }
@@ -326,7 +338,7 @@ pub(crate) fn spawn_helper(
                         client: client.inner.clone(),
                         data,
                         disabled: false,
-                    }))
+                    }));
                 }
                 Err(e) => break f(Err(e)),
                 Ok(None) if helper.producer_done() => break,
@@ -385,8 +397,26 @@ impl Helper {
     }
 }
 
-fn is_valid_fd(fd: c_int) -> bool {
-    unsafe { libc::fcntl(fd, libc::F_GETFD) != -1 }
+fn check_fd(fd: c_int) -> bool {
+    #[cfg(feature = "check_pipe")]
+    unsafe {
+        let mut stat = mem::zeroed();
+        if libc::fstat(fd, &mut stat) == 0 {
+            // On android arm and i686 mode_t is u16 and st_mode is u32,
+            // this generates a type mismatch when S_IFIFO (declared as mode_t)
+            // is used in operations with st_mode, so we use this workaround
+            // to get the value of S_IFIFO with the same type of st_mode.
+            let mut s_ififo = stat.st_mode;
+            s_ififo = libc::S_IFIFO as _;
+            stat.st_mode & s_ififo == s_ififo
+        } else {
+            false
+        }
+    }
+    #[cfg(not(feature = "check_pipe"))]
+    unsafe {
+        libc::fcntl(fd, libc::F_GETFD) != -1
+    }
 }
 
 fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {

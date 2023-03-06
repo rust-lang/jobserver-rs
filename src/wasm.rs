@@ -17,6 +17,11 @@ struct Inner {
 #[derive(Debug)]
 pub struct Acquired(());
 
+#[derive(Debug)]
+pub enum ErrFromEnv {
+    UnavailableOnTarget,
+}
+
 impl Client {
     pub fn new(limit: usize) -> io::Result<Client> {
         Ok(Client {
@@ -27,8 +32,8 @@ impl Client {
         })
     }
 
-    pub unsafe fn open(_s: &str) -> Option<Client> {
-        None
+    pub unsafe fn open(_s: &str) -> Result<Client, ErrFromEnv> {
+        Err(ErrFromEnv::UnavailableOnTarget)
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {

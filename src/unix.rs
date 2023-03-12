@@ -90,9 +90,9 @@ impl Client {
 
     pub unsafe fn open(s: &str) -> Result<Client, ErrFromEnv> {
         match (Self::from_fifo(s), Self::from_pipe(s)) {
-            (Some(result), None) | (None, Some(result)) => result,
+            (Some(Ok(c)), _) | (_, Some(Ok(c))) => Ok(c),
+            (Some(Err(e)), _) | (_, Some(Err(e))) => Err(e),
             (None, None) => Err(ErrFromEnv::ParseEnvVar),
-            (Some(_), Some(_)) => unreachable!(),
         }
     }
 

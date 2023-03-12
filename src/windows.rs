@@ -141,7 +141,7 @@ impl Client {
 
         let sem = OpenSemaphoreA(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, name.as_ptr());
         if sem.is_null() {
-            Err(CannotAcquireSemaphore)
+            Err(ErrFromEnv::CannotAcquireSemaphore)
         } else {
             Ok(Client {
                 sem: Handle(sem),

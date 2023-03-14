@@ -89,7 +89,7 @@ impl Client {
     }
 
     pub unsafe fn open(s: &str) -> Result<Client, ErrFromEnv> {
-        Ok(Self::from_fifo(s)?.unwrap_or(Self::from_pipe(s)?.ok_or(ErrFromEnv::ParseEnvVar)?))
+        Ok(Self::from_fifo(s)?.unwrap_or(Self::from_pipe(s)?))
     }
 
     /// `--jobserver-auth=fifo:PATH`
@@ -110,7 +110,7 @@ impl Client {
     }
 
     /// `--jobserver-auth=R,W`
-    unsafe fn from_pipe(s: &str) -> Result<Option<Client>, ErrFromEnv> {
+    unsafe fn from_pipe(s: &str) -> Result<Client, ErrFromEnv> {
         let mut parts = s.splitn(2, ',');
         let read = parts.next().unwrap();
         let write = parts.next().ok_or(ErrFromEnv::ParseEnvVar)?;
@@ -128,7 +128,7 @@ impl Client {
         if check_fd(read) && check_fd(write) {
             drop(set_cloexec(read, true));
             drop(set_cloexec(write, true));
-            Ok(Some(Client::from_fds(read, write)))
+            Ok(Client::from_fds(read, write))
         } else {
             Err(ErrFromEnv::InvalidDescriptor(read, write))
         }

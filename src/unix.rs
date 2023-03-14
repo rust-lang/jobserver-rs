@@ -100,10 +100,9 @@ impl Client {
         if parts.next().unwrap() != "fifo" {
             return Ok(None);
         }
-        let path = Path::new(parts.next().ok_or(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "expected ':' after `fifo`",
-        ))?);
+        let path = Path::new(parts.next().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "expected ':' after `fifo`")
+        })?);
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         Ok(Some(Client::Fifo {
             file,

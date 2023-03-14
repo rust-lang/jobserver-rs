@@ -82,7 +82,10 @@ impl Client {
     }
 
     pub unsafe fn open(s: &str) -> io::Result<Client> {
-        Ok(Self::from_fifo(s)?.unwrap_or(Self::from_pipe(s)?))
+        if let Some(client) = Self::from_fifo(s)? {
+            return Ok(client);
+        }
+        Self::from_pipe(s)
     }
 
     /// `--jobserver-auth=fifo:PATH`

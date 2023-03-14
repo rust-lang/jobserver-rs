@@ -89,50 +89,33 @@ impl Client {
     }
 
     pub unsafe fn open(s: &str) -> Result<Client, ErrFromEnv> {
-        match (Self::from_fifo(s), Self::from_pipe(s)) {
-            (Some(Ok(c)), _) | (_, Some(Ok(c))) => Ok(c),
-            (Some(Err(e)), _) | (_, Some(Err(e))) => Err(e),
-            (None, None) => Err(ErrFromEnv::ParseEnvVar),
-        }
+        Ok(Self::from_fifo(s)?.unwrap_or(Self::from_pipe(s)?.ok_or(ErrFromEnv::ParseEnvVar)?))
     }
 
     /// `--jobserver-auth=fifo:PATH`
-    fn from_fifo(s: &str) -> Option<Result<Client, ErrFromEnv>> {
+    fn from_fifo(s: &str) -> Result<Option<Client>, ErrFromEnv> {
         let mut parts = s.splitn(2, ':');
         if parts.next().unwrap() != "fifo" {
-            return None;
+            return Ok(None);
         }
-        let path = match parts.next() {
-            Some(p) => Path::new(p),
-            None => return Some(Err(ErrFromEnv::ParseEnvVar)),
-        };
+        let path = Path::new(parts.next().ok_or(ErrFromEnv::ParseEnvVar)?);
         let file = match OpenOptions::new().read(true).write(true).open(path) {
             Ok(f) => f,
-            Err(e) => return Some(Err(ErrFromEnv::OpenFile(e.to_string()))),
+            Err(e) => return Err(ErrFromEnv::OpenFile(e.to_string())),
         };
-        Some(Ok(Client::Fifo {
+        Ok(Some(Client::Fifo {
             file,
             path: path.into(),
         }))
     }
 
     /// `--jobserver-auth=R,W`
-    unsafe fn from_pipe(s: &str) -> Option<Result<Client, ErrFromEnv>> {
+    unsafe fn from_pipe(s: &str) -> Result<Option<Client>, ErrFromEnv> {
         let mut parts = s.splitn(2, ',');
         let read = parts.next().unwrap();
-        let write = match parts.next() {
-            Some(s) => s,
-            None => return Some(Err(ErrFromEnv::ParseEnvVar)),
-        };
-
-        let read = match read.parse() {
-            Ok(n) => n,
-            Err(_) => return Some(Err(ErrFromEnv::ParseEnvVar)),
-        };
-        let write = match write.parse() {
-            Ok(n) => n,
-            Err(_) => return Some(Err(ErrFromEnv::ParseEnvVar)),
-        };
+        let write = parts.next().ok_or(ErrFromEnv::ParseEnvVar)?;
+        let read = read.parse().map_err(|_| ErrFromEnv::ParseEnvVar)?;
+        let write = write.parse().map_err(|_| ErrFromEnv::ParseEnvVar)?;
 
         // Ok so we've got two integers that look like file descriptors, but
         // for extra sanity checking let's see if they actually look like
@@ -145,9 +128,9 @@ impl Client {
         if check_fd(read) && check_fd(write) {
             drop(set_cloexec(read, true));
             drop(set_cloexec(write, true));
-            Some(Ok(Client::from_fds(read, write)))
+            Ok(Some(Client::from_fds(read, write)))
         } else {
-            Some(Err(ErrFromEnv::InvalidDescriptor(read, write)))
+            Err(ErrFromEnv::InvalidDescriptor(read, write))
         }
     }
 

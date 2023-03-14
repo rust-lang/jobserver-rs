@@ -167,6 +167,28 @@ pub enum ErrFromEnv {
     },
 }
 
+impl std::fmt::Display for ErrFromEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrFromEnv::IsNotConfigured => {
+                write!(f, "couldn't find relevant environment variable")
+            }
+            ErrFromEnv::PlatformSpecific { err, env, var } => {
+                write!(f, "{err} ({env}={var}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ErrFromEnv {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ErrFromEnv::IsNotConfigured => None,
+            ErrFromEnv::PlatformSpecific { err, .. } => Some(err),
+        }
+    }
+}
+
 impl Client {
     /// Creates a new jobserver initialized with the given parallelism limit.
     ///

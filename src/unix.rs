@@ -25,13 +25,6 @@ pub struct Acquired {
     byte: u8,
 }
 
-#[derive(Debug)]
-pub enum ErrFromEnv {
-    ParseEnvVar,
-    OpenFile(String),
-    InvalidDescriptor(i32, i32),
-}
-
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
         let client = unsafe { Client::mk()? };
@@ -88,21 +81,21 @@ impl Client {
         Ok(Client::from_fds(pipes[0], pipes[1]))
     }
 
-    pub unsafe fn open(s: &str) -> Result<Client, ErrFromEnv> {
+    pub unsafe fn open(s: &str) -> io::Result<Client> {
         Ok(Self::from_fifo(s)?.unwrap_or(Self::from_pipe(s)?))
     }
 
     /// `--jobserver-auth=fifo:PATH`
-    fn from_fifo(s: &str) -> Result<Option<Client>, ErrFromEnv> {
+    fn from_fifo(s: &str) -> io::Result<Option<Client>> {
         let mut parts = s.splitn(2, ':');
         if parts.next().unwrap() != "fifo" {
             return Ok(None);
         }
-        let path = Path::new(parts.next().ok_or(ErrFromEnv::ParseEnvVar)?);
-        let file = match OpenOptions::new().read(true).write(true).open(path) {
-            Ok(f) => f,
-            Err(e) => return Err(ErrFromEnv::OpenFile(e.to_string())),
-        };
+        let path = Path::new(parts.next().ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "expected ':' after `fifo`",
+        ))?);
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
         Ok(Some(Client::Fifo {
             file,
             path: path.into(),
@@ -110,12 +103,19 @@ impl Client {
     }
 
     /// `--jobserver-auth=R,W`
-    unsafe fn from_pipe(s: &str) -> Result<Client, ErrFromEnv> {
+    unsafe fn from_pipe(s: &str) -> io::Result<Client> {
         let mut parts = s.splitn(2, ',');
         let read = parts.next().unwrap();
-        let write = parts.next().ok_or(ErrFromEnv::ParseEnvVar)?;
-        let read = read.parse().map_err(|_| ErrFromEnv::ParseEnvVar)?;
-        let write = write.parse().map_err(|_| ErrFromEnv::ParseEnvVar)?;
+        let write = parts.next().ok_or(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "expected ',' in `auth=R,W`",
+        ))?;
+        let read = read
+            .parse()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let write = write
+            .parse()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         // Ok so we've got two integers that look like file descriptors, but
         // for extra sanity checking let's see if they actually look like
@@ -130,7 +130,10 @@ impl Client {
             drop(set_cloexec(write, true));
             Ok(Client::from_fds(read, write))
         } else {
-            Err(ErrFromEnv::InvalidDescriptor(read, write))
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid file descriptors",
+            ))
         }
     }
 

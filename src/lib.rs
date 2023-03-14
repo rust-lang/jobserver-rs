@@ -159,7 +159,7 @@ pub enum ErrFromEnv {
     /// Cannot connect following this process's environment.
     PlatformSpecific {
         /// Error.
-        err: imp::ErrFromEnv,
+        err: io::Error,
         /// Name of gotten env var.
         env: &'static str,
         /// Value of gotten env var.

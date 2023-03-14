@@ -14,12 +14,6 @@ pub struct Client {
 #[derive(Debug)]
 pub struct Acquired;
 
-#[derive(Debug)]
-pub enum ErrFromEnv {
-    IsNotCString,
-    CannotAcquireSemaphore,
-}
-
 type BOOL = i32;
 type DWORD = u32;
 type HANDLE = *mut u8;
@@ -133,15 +127,12 @@ impl Client {
         ))
     }
 
-    pub unsafe fn open(s: &str) -> Result<Client, ErrFromEnv> {
-        let name = match CString::new(s) {
-            Ok(s) => s,
-            Err(_) => return Err(ErrFromEnv::IsNotCString),
-        };
+    pub unsafe fn open(s: &str) -> io::Result<Client> {
+        let name = CString::new(s).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         let sem = OpenSemaphoreA(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, name.as_ptr());
         if sem.is_null() {
-            Err(ErrFromEnv::CannotAcquireSemaphore)
+            Err(io::Error::last_os_error())
         } else {
             Ok(Client {
                 sem: Handle(sem),

@@ -125,16 +125,11 @@ impl Client {
         // If we're called from `make` *without* the leading + on our rule
         // then we'll have `MAKEFLAGS` env vars but won't actually have
         // access to the file descriptors.
-        if check_fd(read) && check_fd(write) {
-            drop(set_cloexec(read, true));
-            drop(set_cloexec(write, true));
-            Ok(Client::from_fds(read, write))
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid file descriptors",
-            ))
-        }
+        check_fd(read)?;
+        check_fd(write)?;
+        drop(set_cloexec(read, true));
+        drop(set_cloexec(write, true));
+        Ok(Client::from_fds(read, write))
     }
 
     unsafe fn from_fds(read: c_int, write: c_int) -> Client {
@@ -383,25 +378,34 @@ impl Helper {
     }
 }
 
-fn check_fd(fd: c_int) -> bool {
+fn check_fd(fd: c_int) -> io::Result<()> {
     #[cfg(feature = "check_pipe")]
     unsafe {
         let mut stat = mem::zeroed();
-        if libc::fstat(fd, &mut stat) == 0 {
+        if libc::fstat(fd, &mut stat) == -1 {
+            Err(io::Error::last_os_error())
+        } else {
             // On android arm and i686 mode_t is u16 and st_mode is u32,
             // this generates a type mismatch when S_IFIFO (declared as mode_t)
             // is used in operations with st_mode, so we use this workaround
             // to get the value of S_IFIFO with the same type of st_mode.
             let mut s_ififo = stat.st_mode;
             s_ififo = libc::S_IFIFO as _;
-            stat.st_mode & s_ififo == s_ififo
-        } else {
-            false
+            if stat.st_mode & s_ififo == s_ififo {
+                return Ok(());
+            }
+            Err(io::Error::last_os_error()) //
         }
     }
     #[cfg(not(feature = "check_pipe"))]
     unsafe {
-        libc::fcntl(fd, libc::F_GETFD) != -1
+        match libc::fcntl(fd, libc::F_GETFD) {
+            r if r == -1 => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{fd} is not a pipe"),
+            )),
+            _ => Ok(()),
+        }
     }
 }
 

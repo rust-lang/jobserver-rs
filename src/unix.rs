@@ -85,7 +85,13 @@ impl Client {
         if let Some(client) = Self::from_fifo(s)? {
             return Ok(client);
         }
-        Self::from_pipe(s)
+        if let Some(client) = Self::from_pipe(s)? {
+            return Ok(client);
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unrecognized format of environment variable",
+        ))
     }
 
     /// `--jobserver-auth=fifo:PATH`
@@ -106,13 +112,13 @@ impl Client {
     }
 
     /// `--jobserver-auth=R,W`
-    unsafe fn from_pipe(s: &str) -> io::Result<Client> {
+    unsafe fn from_pipe(s: &str) -> io::Result<Option<Client>> {
         let mut parts = s.splitn(2, ',');
         let read = parts.next().unwrap();
-        let write = parts.next().ok_or(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "expected ',' in `auth=R,W`",
-        ))?;
+        let write = match parts.next() {
+            Some(w) => w,
+            None => return Ok(None),
+        };
         let read = read
             .parse()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -132,7 +138,7 @@ impl Client {
         check_fd(write)?;
         drop(set_cloexec(read, true));
         drop(set_cloexec(write, true));
-        Ok(Client::from_fds(read, write))
+        Ok(Some(Client::from_fds(read, write)))
     }
 
     unsafe fn from_fds(read: c_int, write: c_int) -> Client {

@@ -379,7 +379,7 @@ impl Helper {
 }
 
 fn check_fd(fd: c_int) -> io::Result<()> {
-    #[cfg(feature = "check_pipe")]
+    #[cfg(not(feature = "do_not_check_pipe"))]
     unsafe {
         let mut stat = mem::zeroed();
         if libc::fstat(fd, &mut stat) == -1 {
@@ -397,7 +397,7 @@ fn check_fd(fd: c_int) -> io::Result<()> {
             Err(io::Error::last_os_error()) //
         }
     }
-    #[cfg(not(feature = "check_pipe"))]
+    #[cfg(feature = "do_not_check_pipe")]
     unsafe {
         match libc::fcntl(fd, libc::F_GETFD) {
             r if r == -1 => Err(io::Error::new(

@@ -15,7 +15,7 @@ edition = "2018"
 libc = "0.2.50"
 
 [features]
-check_pipe = []
+do_not_check_pipe = []
 
 [dev-dependencies]
 futures = "0.1"

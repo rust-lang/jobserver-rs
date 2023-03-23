@@ -29,8 +29,8 @@
 //!
 //! // See API documentation for why this is `unsafe`
 //! let client = match unsafe { Client::from_env() } {
-//!     Ok(client) => client,
-//!     Err(_) => panic!("client not configured"),
+//!     Some(client) => client,
+//!     None => panic!("client not configured"),
 //! };
 //! ```
 //!
@@ -269,7 +269,7 @@ impl Client {
     ///
     /// Note, though, that on Windows it should be safe to call this function
     /// any number of times.
-    pub unsafe fn from_env() -> Result<Client, ErrFromEnv> {
+    pub unsafe fn from_env_ext() -> Result<Client, ErrFromEnv> {
         let (env, var) = ["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"]
             .iter()
             .map(|&env| env::var(env).map(|var| (env, var)))
@@ -287,6 +287,14 @@ impl Client {
             Ok(c) => Ok(Client { inner: Arc::new(c) }),
             Err(err) => Err(ErrFromEnv::PlatformSpecific { err, env, var }),
         }
+    }
+
+    /// Attempts to connect to the jobserver specified in this process's
+    /// environment.
+    ///
+    /// Wraps `from_env_ext` and discards error details.
+    pub unsafe fn from_env() -> Option<Client> {
+        Self::from_env_ext().ok()
     }
 
     /// Acquires a token from this jobserver client.

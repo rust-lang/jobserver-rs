@@ -250,8 +250,8 @@ impl Client {
     /// with `CLOEXEC` so they're not automatically inherited by spawned
     /// children.
     ///
-    /// There is a feature to configure, will this function check if provided
-    /// files are actually pipes.
+    /// On unix if `unix_check_is_pipe` enabled this function will check if
+    /// provided files are actually pipes.
     ///
     /// # Safety
     ///
@@ -269,7 +269,7 @@ impl Client {
     ///
     /// Note, though, that on Windows it should be safe to call this function
     /// any number of times.
-    pub unsafe fn from_env_ext() -> Result<Client, ErrFromEnv> {
+    pub unsafe fn from_env_ext(check_pipe: bool) -> Result<Client, ErrFromEnv> {
         let (env, var) = ["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"]
             .iter()
             .map(|&env| env::var(env).map(|var| (env, var)))
@@ -283,7 +283,11 @@ impl Client {
             .ok_or(ErrFromEnv::IsNotConfigured)?;
 
         let s = var[pos + arg.len()..].split(' ').next().unwrap();
-        match imp::Client::open(s) {
+        #[cfg(unix)]
+        let imp_client = imp::Client::open(s, check_pipe);
+        #[cfg(not(unix))]
+        let imp_client = imp::Client::open(s);
+        match imp_client {
             Ok(c) => Ok(Client { inner: Arc::new(c) }),
             Err(err) => Err(ErrFromEnv::PlatformSpecific { err, env, var }),
         }
@@ -294,7 +298,7 @@ impl Client {
     ///
     /// Wraps `from_env_ext` and discards error details.
     pub unsafe fn from_env() -> Option<Client> {
-        Self::from_env_ext().ok()
+        Self::from_env_ext(false).ok()
     }
 
     /// Acquires a token from this jobserver client.

@@ -81,11 +81,11 @@ impl Client {
         Ok(Client::from_fds(pipes[0], pipes[1]))
     }
 
-    pub unsafe fn open(s: &str) -> io::Result<Client> {
+    pub unsafe fn open(s: &str, check_pipe: bool) -> io::Result<Client> {
         if let Some(client) = Self::from_fifo(s)? {
             return Ok(client);
         }
-        if let Some(client) = Self::from_pipe(s)? {
+        if let Some(client) = Self::from_pipe(s, check_pipe)? {
             return Ok(client);
         }
         Err(io::Error::new(
@@ -111,7 +111,7 @@ impl Client {
     }
 
     /// `--jobserver-auth=R,W`
-    unsafe fn from_pipe(s: &str) -> io::Result<Option<Client>> {
+    unsafe fn from_pipe(s: &str, check_pipe: bool) -> io::Result<Option<Client>> {
         let mut parts = s.splitn(2, ',');
         let read = parts.next().unwrap();
         let write = match parts.next() {
@@ -133,8 +133,8 @@ impl Client {
         // If we're called from `make` *without* the leading + on our rule
         // then we'll have `MAKEFLAGS` env vars but won't actually have
         // access to the file descriptors.
-        check_fd(read)?;
-        check_fd(write)?;
+        check_fd(read, check_pipe)?;
+        check_fd(write, check_pipe)?;
         drop(set_cloexec(read, true));
         drop(set_cloexec(write, true));
         Ok(Some(Client::from_fds(read, write)))
@@ -386,9 +386,8 @@ impl Helper {
     }
 }
 
-fn check_fd(fd: c_int) -> io::Result<()> {
-    #[cfg(not(feature = "do_not_check_pipe"))]
-    unsafe {
+unsafe fn check_fd(fd: c_int, check_pipe: bool) -> io::Result<()> {
+    if check_pipe {
         let mut stat = mem::zeroed();
         if libc::fstat(fd, &mut stat) == -1 {
             Err(io::Error::last_os_error())
@@ -404,9 +403,7 @@ fn check_fd(fd: c_int) -> io::Result<()> {
             }
             Err(io::Error::last_os_error()) //
         }
-    }
-    #[cfg(feature = "do_not_check_pipe")]
-    unsafe {
+    } else {
         match libc::fcntl(fd, libc::F_GETFD) {
             r if r == -1 => Err(io::Error::new(
                 io::ErrorKind::InvalidData,

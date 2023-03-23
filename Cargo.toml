@@ -14,9 +14,6 @@ edition = "2018"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.50"
 
-[features]
-do_not_check_pipe = []
-
 [dev-dependencies]
 futures = "0.1"
 num_cpus = "1.0"

@@ -151,6 +151,44 @@ struct HelperInner {
     consumer_done: bool,
 }
 
+/// Error type for `from_env` function.
+#[derive(Debug)]
+pub enum ErrFromEnv {
+    /// There isn't env var, that describes jobserver to inherit.
+    IsNotConfigured,
+    /// Cannot connect following this process's environment.
+    PlatformSpecific {
+        /// Error.
+        err: io::Error,
+        /// Name of gotten env var.
+        env: &'static str,
+        /// Value of gotten env var.
+        var: String,
+    },
+}
+
+impl std::fmt::Display for ErrFromEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErrFromEnv::IsNotConfigured => {
+                write!(f, "couldn't find relevant environment variable")
+            }
+            ErrFromEnv::PlatformSpecific { err, env, var } => {
+                write!(f, "{err} ({env}={var}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ErrFromEnv {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ErrFromEnv::IsNotConfigured => None,
+            ErrFromEnv::PlatformSpecific { err, .. } => Some(err),
+        }
+    }
+}
+
 impl Client {
     /// Creates a new jobserver initialized with the given parallelism limit.
     ///
@@ -197,8 +235,9 @@ impl Client {
     /// # Return value
     ///
     /// If a jobserver was found in the environment and it looks correct then
-    /// `Some` of the connected client will be returned. If no jobserver was
-    /// found then `None` will be returned.
+    /// `Ok` of the connected client will be returned. If no relevant env var
+    /// was found then `Err(IsNotConfigured)` will be returned. In other cases
+    /// `Err(PlatformSpecific)` will be returned.
     ///
     /// Note that on Unix the `Client` returned **takes ownership of the file
     /// descriptors specified in the environment**. Jobservers on Unix are
@@ -210,6 +249,9 @@ impl Client {
     /// Additionally on Unix this function will configure the file descriptors
     /// with `CLOEXEC` so they're not automatically inherited by spawned
     /// children.
+    ///
+    /// On unix if `unix_check_is_pipe` enabled this function will check if
+    /// provided files are actually pipes.
     ///
     /// # Safety
     ///
@@ -227,28 +269,36 @@ impl Client {
     ///
     /// Note, though, that on Windows it should be safe to call this function
     /// any number of times.
-    pub unsafe fn from_env() -> Option<Client> {
-        let var = match env::var("CARGO_MAKEFLAGS")
-            .or_else(|_| env::var("MAKEFLAGS"))
-            .or_else(|_| env::var("MFLAGS"))
-        {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-        let mut arg = "--jobserver-fds=";
-        let pos = match var.find(arg) {
-            Some(i) => i,
-            None => {
-                arg = "--jobserver-auth=";
-                match var.find(arg) {
-                    Some(i) => i,
-                    None => return None,
-                }
-            }
-        };
+    pub unsafe fn from_env_ext(check_pipe: bool) -> Result<Client, ErrFromEnv> {
+        let (env, var) = ["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"]
+            .iter()
+            .map(|&env| env::var(env).map(|var| (env, var)))
+            .find_map(|p| p.ok())
+            .ok_or(ErrFromEnv::IsNotConfigured)?;
+
+        let (arg, pos) = ["--jobserver-fds=", "--jobserver-auth="]
+            .iter()
+            .map(|&arg| var.find(arg).map(|pos| (arg, pos)))
+            .find_map(|pos| pos)
+            .ok_or(ErrFromEnv::IsNotConfigured)?;
 
         let s = var[pos + arg.len()..].split(' ').next().unwrap();
-        imp::Client::open(s).map(|c| Client { inner: Arc::new(c) })
+        #[cfg(unix)]
+        let imp_client = imp::Client::open(s, check_pipe);
+        #[cfg(not(unix))]
+        let imp_client = imp::Client::open(s);
+        match imp_client {
+            Ok(c) => Ok(Client { inner: Arc::new(c) }),
+            Err(err) => Err(ErrFromEnv::PlatformSpecific { err, env, var }),
+        }
+    }
+
+    /// Attempts to connect to the jobserver specified in this process's
+    /// environment.
+    ///
+    /// Wraps `from_env_ext` and discards error details.
+    pub unsafe fn from_env() -> Option<Client> {
+        Self::from_env_ext(false).ok()
     }
 
     /// Acquires a token from this jobserver client.

@@ -27,8 +27,8 @@ impl Client {
         })
     }
 
-    pub unsafe fn open(_s: &str) -> Option<Client> {
-        None
+    pub unsafe fn open(_s: &str) -> io::Result<Client> {
+        Err(io::ErrorKind::Unsupported.into())
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {

@@ -127,17 +127,14 @@ impl Client {
         ))
     }
 
-    pub unsafe fn open(s: &str) -> Option<Client> {
-        let name = match CString::new(s) {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
+    pub unsafe fn open(s: &str) -> io::Result<Client> {
+        let name = CString::new(s).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         let sem = OpenSemaphoreA(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, name.as_ptr());
         if sem.is_null() {
-            None
+            Err(io::Error::last_os_error())
         } else {
-            Some(Client {
+            Ok(Client {
                 sem: Handle(sem),
                 name: s.to_string(),
             })

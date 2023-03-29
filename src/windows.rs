@@ -1,3 +1,4 @@
+use crate::FromEnvErrorInner;
 use std::ffi::CString;
 use std::io;
 use std::process::Command;
@@ -127,12 +128,18 @@ impl Client {
         ))
     }
 
-    pub unsafe fn open(s: &str) -> io::Result<Client> {
-        let name = CString::new(s).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    pub(crate) unsafe fn open(s: &str, _check_pipe: bool) -> Result<Client, FromEnvErrorInner> {
+        let name = match CString::new(s) {
+            Ok(s) => s,
+            Err(e) => return Err(FromEnvErrorInner::CannotParse(e.to_string())),
+        };
 
         let sem = OpenSemaphoreA(SYNCHRONIZE | SEMAPHORE_MODIFY_STATE, FALSE, name.as_ptr());
         if sem.is_null() {
-            Err(io::Error::last_os_error())
+            Err(FromEnvErrorInner::CannotOpenPath(
+                s.to_string(),
+                io::Error::last_os_error(),
+            ))
         } else {
             Ok(Client {
                 sem: Handle(sem),

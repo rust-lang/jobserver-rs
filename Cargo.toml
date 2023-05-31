@@ -15,7 +15,7 @@ edition = "2018"
 libc = "0.2.50"
 
 [dev-dependencies]
-futures = "0.1"
+futures = "0.3"
 num_cpus = "1.0"
 tempfile = "3"
 tokio-core = "0.1"

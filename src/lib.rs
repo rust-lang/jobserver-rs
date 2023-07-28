@@ -285,12 +285,7 @@ impl Client {
             .find_map(|pos| pos)
         {
             Some((arg, pos)) => (arg, pos),
-            None => {
-                let err = FromEnvErrorInner::CannotParse(
-                    "expected `--jobserver-fds=` or `--jobserver-auth=`".to_string(),
-                );
-                return FromEnv::new_err(err, env, var_os);
-            }
+            None => return FromEnv::new_err(FromEnvErrorInner::NoJobserver, env, var_os),
         };
 
         let s = var[pos + arg.len()..].split(' ').next().unwrap();

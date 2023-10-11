@@ -10,6 +10,7 @@ description = """
 An implementation of the GNU make jobserver for Rust
 """
 edition = "2018"
+rust-version = "1.66"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.50"

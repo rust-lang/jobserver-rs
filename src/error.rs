@@ -1,5 +1,5 @@
 #[cfg(unix)]
-type RawFd = std::os::fd::RawFd;
+type RawFd = std::os::unix::io::RawFd;
 #[cfg(not(unix))]
 type RawFd = std::convert::Infallible;
 

@@ -53,19 +53,12 @@ impl Client {
         Ok(())
     }
 
-    pub fn string_arg(&self) -> String {
-        panic!(
-            "On this platform there is no cross process jobserver support,
-             so Client::configure is not supported."
-        );
-    }
-
     pub fn available(&self) -> io::Result<usize> {
         let lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
         Ok(*lock)
     }
 
-    pub fn configure(&self, _cmd: &mut Command) {
+    pub fn disable_inheritance(&self, _cmd: &mut Command) {
         unreachable!();
     }
 }

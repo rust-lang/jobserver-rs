@@ -96,7 +96,7 @@ impl Client {
             unsafe {
                 let create_limit = if limit == 0 { 1 } else { limit };
                 let r = CreateSemaphoreA(
-                    ptr::null_mut(),
+                    ptr::null_mut(), // SECURITY_ATTRIBUTES::bInheritHandle.
                     create_limit as LONG,
                     create_limit as LONG,
                     name.as_ptr() as *const _,
@@ -118,6 +118,9 @@ impl Client {
                 if create_limit != limit {
                     client.acquire()?;
                 }
+
+                let string_arg = format!("--jobserver-auth={}", client.name);
+                std::env::set_var("CARGO_MAKEFLAGS", string_arg);
                 return Ok(client);
             }
         }
@@ -170,10 +173,6 @@ impl Client {
         }
     }
 
-    pub fn string_arg(&self) -> String {
-        self.name.clone()
-    }
-
     pub fn available(&self) -> io::Result<usize> {
         // Can't read value of a semaphore on Windows, so
         // try to acquire without sleeping, since we can find out the
@@ -194,10 +193,7 @@ impl Client {
         }
     }
 
-    pub fn configure(&self, _cmd: &mut Command) {
-        // nothing to do here, we gave the name of our semaphore to the
-        // child above
-    }
+    pub fn disable_inheritance(&self, _cmd: &mut Command) {}
 }
 
 #[derive(Debug)]

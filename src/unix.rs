@@ -28,7 +28,7 @@ pub struct Acquired {
 
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
-        let client = unsafe { Client::mk()? };
+        let (client, string_arg) = unsafe { Client::mk()? };
 
         // I don't think the character written here matters, but I could be
         // wrong!
@@ -47,39 +47,21 @@ impl Client {
 
         set_nonblocking(write.as_raw_fd(), false)?;
 
+        // TODO: what if this var has already been set?
+        std::env::set_var("CARGO_MAKEFLAGS", string_arg);
+
         Ok(client)
     }
 
-    unsafe fn mk() -> io::Result<Client> {
+    unsafe fn mk() -> io::Result<(Client, String)> {
         let mut pipes = [0; 2];
-
-        // Attempt atomically-create-with-cloexec if we can on Linux,
-        // detected by using the `syscall` function in `libc` to try to work
-        // with as many kernels/glibc implementations as possible.
-        #[cfg(target_os = "linux")]
-        {
-            use std::sync::atomic::{AtomicBool, Ordering};
-
-            static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
-            if PIPE2_AVAILABLE.load(Ordering::SeqCst) {
-                match libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) {
-                    -1 => {
-                        let err = io::Error::last_os_error();
-                        if err.raw_os_error() == Some(libc::ENOSYS) {
-                            PIPE2_AVAILABLE.store(false, Ordering::SeqCst);
-                        } else {
-                            return Err(err);
-                        }
-                    }
-                    _ => return Ok(Client::from_fds(pipes[0], pipes[1])),
-                }
-            }
-        }
-
         cvt(libc::pipe(pipes.as_mut_ptr()))?;
-        drop(set_cloexec(pipes[0], true));
-        drop(set_cloexec(pipes[1], true));
-        Ok(Client::from_fds(pipes[0], pipes[1]))
+        let string_arg = format!(
+            "--jobserver-fds={},{}",
+            pipes[0].as_raw_fd(),
+            pipes[1].as_raw_fd()
+        );
+        Ok((Client::from_fds(pipes[0], pipes[1]), string_arg))
     }
 
     pub(crate) unsafe fn open(s: &str, check_pipe: bool) -> Result<Client, FromEnvErrorInner> {
@@ -149,8 +131,10 @@ impl Client {
             }
         }
 
-        drop(set_cloexec(read, true));
-        drop(set_cloexec(write, true));
+        // // Unless env var was explicitly removed, file descriptors should be passed.
+        // drop(set_cloexec(read, false));
+        // drop(set_cloexec(write, false));
+
         Ok(Some(Client::from_fds(read, write)))
     }
 
@@ -263,38 +247,26 @@ impl Client {
         }
     }
 
-    pub fn string_arg(&self) -> String {
-        match self {
-            Client::Pipe { read, write } => format!("{},{}", read.as_raw_fd(), write.as_raw_fd()),
-            Client::Fifo { path, .. } => format!("fifo:{}", path.to_str().unwrap()),
-        }
-    }
-
     pub fn available(&self) -> io::Result<usize> {
         let mut len = MaybeUninit::<c_int>::uninit();
         cvt(unsafe { libc::ioctl(self.read().as_raw_fd(), libc::FIONREAD, len.as_mut_ptr()) })?;
         Ok(unsafe { len.assume_init() } as usize)
     }
 
-    pub fn configure(&self, cmd: &mut Command) {
-        match self {
-            // We `File::open`ed it when inheriting from environment,
-            // so no need to set cloexec for fifo.
-            Client::Fifo { .. } => return,
-            Client::Pipe { .. } => {}
-        };
-        // Here we basically just want to say that in the child process
-        // we'll configure the read/write file descriptors to *not* be
-        // cloexec, so they're inherited across the exec and specified as
-        // integers through `string_arg` above.
-        let read = self.read().as_raw_fd();
-        let write = self.write().as_raw_fd();
-        unsafe {
-            cmd.pre_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
-                Ok(())
-            });
+    pub fn disable_inheritance(&self, cmd: &mut Command) {
+        if let Client::Pipe { .. } = self {
+            // Here we basically just want to say that in the child process
+            // we'll configure the read/write file descriptors to be cloexec,
+            // so they aren't inherited across the exec.
+            let read = self.read().as_raw_fd();
+            let write = self.write().as_raw_fd();
+            unsafe {
+                cmd.pre_exec(move || {
+                    set_cloexec(read, true)?;
+                    set_cloexec(write, true)?;
+                    Ok(())
+                });
+            }
         }
     }
 }

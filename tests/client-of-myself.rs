@@ -29,7 +29,7 @@ fn server() {
     let client = t!(Client::new(1));
     let mut cmd = Command::new(me);
     cmd.env("I_AM_THE_CLIENT", "1").stdout(Stdio::piped());
-    client.configure(&mut cmd);
+    // client.configure(&mut cmd);
     let acq = client.acquire().unwrap();
     let mut child = t!(cmd.spawn());
     let stdout = child.stdout.take().unwrap();
@@ -52,7 +52,8 @@ fn server() {
 }
 
 fn client() {
-    let client = unsafe { Client::from_env().unwrap() };
+    let client = unsafe { Client::from_env_ext(true) }.client.unwrap();
+    // let client = unsafe { Client::from_env().unwrap() };
     let acq = client.acquire().unwrap();
     println!("hello!");
     drop(acq);

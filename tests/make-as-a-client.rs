@@ -35,7 +35,7 @@ fn main() {
         return;
     }
 
-    let c = t!(Client::new(1));
+    let _c = t!(Client::new(1));
     let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
@@ -64,7 +64,7 @@ bar:
 
     // We're leaking one extra token to `make` sort of violating the makefile
     // jobserver protocol. It has the desired effect though.
-    c.configure(&mut cmd);
+    // c.configure(&mut cmd);
 
     let listener = t!(TcpListener::bind("127.0.0.1:0"));
     let addr = t!(listener.local_addr());

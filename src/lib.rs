@@ -52,7 +52,7 @@
 //!
 //! let client = Client::new(4).expect("failed to create jobserver");
 //! let mut cmd = Command::new("make");
-//! client.configure(&mut cmd);
+//! // client.configure(&mut cmd);
 //! ```
 //!
 //! ## Caveats
@@ -188,10 +188,9 @@ impl Client {
     /// allow at most `limit` tokens to be acquired from it in parallel. More
     /// calls to `acquire` will cause the calling thread to block.
     ///
-    /// Note that the created `Client` is not automatically inherited into
-    /// spawned child processes from this program. Manual usage of the
-    /// `configure` function is required for a child process to have access to a
-    /// job server.
+    /// Note that the created `Client` is automatically inherited into
+    /// spawned child processes from this program. `disable_inheritance`
+    /// function can be used to change behavior.
     ///
     /// # Examples
     ///
@@ -219,10 +218,8 @@ impl Client {
     /// it's passing down. This function will attempt to look for these details
     /// and connect to the jobserver.
     ///
-    /// Note that the created `Client` is not automatically inherited into
-    /// spawned child processes from this program. Manual usage of the
-    /// `configure` function is required for a child process to have access to a
-    /// job server.
+    /// Note that the created `Client` is automatically inherited into
+    /// spawned child processes from this program.
     ///
     /// # Return value
     ///
@@ -238,9 +235,9 @@ impl Client {
     /// descriptors for this process and will close the file descriptors after
     /// this value is dropped.
     ///
-    /// Additionally on Unix this function will configure the file descriptors
-    /// with `CLOEXEC` so they're not automatically inherited by spawned
-    /// children.
+    /// // Additionally on Unix this function will configure the file descriptors
+    /// // with `CLOEXEC` false to ensure they're automatically inherited by spawned
+    /// // children.
     ///
     /// On unix if `check_pipe` enabled this function will check if provided
     /// files are actually pipes.
@@ -357,42 +354,13 @@ impl Client {
     /// two file descriptors for this client to be inherited to the child.
     ///
     /// On platforms other than Unix and Windows this panics.
-    pub fn configure(&self, cmd: &mut Command) {
-        cmd.env("CARGO_MAKEFLAGS", &self.mflags_env());
-        self.inner.configure(cmd);
-    }
-
-    /// Configures a child process to have access to this client's jobserver as
-    /// well.
+    pub fn _configure(&self, _cmd: &mut Command) {}
     ///
-    /// This function is required to be called to ensure that a jobserver is
-    /// properly inherited to a child process. If this function is *not* called
-    /// then this `Client` will not be accessible in the child process. In other
-    /// words, if not called, then `Client::from_env` will return `None` in the
-    /// child process (or the equivalent of `Child::from_env` that `make` uses).
-    ///
-    /// ## Platform-specific behavior
-    ///
-    /// On Unix and Windows this will clobber the `CARGO_MAKEFLAGS`,
-    /// `MAKEFLAGS` and `MFLAGS` environment variables for the child process,
-    /// and on Unix this will also allow the two file descriptors for
-    /// this client to be inherited to the child.
-    ///
-    /// On platforms other than Unix and Windows this panics.
-    pub fn configure_make(&self, cmd: &mut Command) {
-        let value = self.mflags_env();
-        cmd.env("CARGO_MAKEFLAGS", &value);
-        cmd.env("MAKEFLAGS", &value);
-        cmd.env("MFLAGS", &value);
-        self.inner.configure(cmd);
-    }
-
-    fn mflags_env(&self) -> String {
-        let arg = self.inner.string_arg();
-        // Older implementations of make use `--jobserver-fds` and newer
-        // implementations use `--jobserver-auth`, pass both to try to catch
-        // both implementations.
-        format!("-j --jobserver-fds={0} --jobserver-auth={0}", arg)
+    pub fn disable_inheritance(&self, cmd: &mut Command) {
+        cmd.env_remove("CARGO_MAKEFLAGS");
+        cmd.env_remove("MAKEFLAGS");
+        cmd.env_remove("MFLAGS");
+        self.inner.disable_inheritance(cmd);
     }
 
     /// Converts this `Client` into a helper thread to deal with a blocking

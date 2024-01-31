@@ -279,11 +279,7 @@ impl Client {
             }
         };
 
-        let (arg, pos) = match ["--jobserver-fds=", "--jobserver-auth="]
-            .iter()
-            .map(|&arg| var.find(arg).map(|pos| (arg, pos)))
-            .find_map(|pos| pos)
-        {
+        let (arg, pos) = match find_jobserver_auth(var) {
             Some((arg, pos)) => (arg, pos),
             None => return FromEnv::new_err(FromEnvErrorInner::NoJobserver, env, var_os),
         };
@@ -586,6 +582,13 @@ impl HelperState {
     fn producer_done(&self) -> bool {
         self.lock().producer_done
     }
+}
+
+fn find_jobserver_auth(var: &str) -> Option<(&str, usize)> {
+    ["--jobserver-fds=", "--jobserver-auth="]
+        .iter()
+        .map(|&arg| var.find(arg).map(|pos| (arg, pos)))
+        .find_map(|pos| pos)
 }
 
 #[test]

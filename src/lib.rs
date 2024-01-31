@@ -595,3 +595,28 @@ fn no_helper_deadlock() {
     let _y = x.clone();
     std::mem::drop(x.into_helper_thread(|_| {}).unwrap());
 }
+
+#[test]
+fn test_find_jobserver_auth() {
+    let cases = [
+        ("--jobserver-auth=auth-a --jobserver-auth=auth-b", "auth-a"),
+        ("--jobserver-auth=auth-b --jobserver-auth=auth-a", "auth-b"),
+        ("--jobserver-fds=fds-a --jobserver-fds=fds-b", "fds-a"),
+        ("--jobserver-fds=fds-b --jobserver-fds=fds-a", "fds-b"),
+        (
+            "--jobserver-auth=auth-a --jobserver-fds=fds-a --jobserver-auth=auth-b",
+            "fds-a",
+        ),
+        (
+            "--jobserver-fds=fds-a --jobserver-auth=auth-a --jobserver-fds=fds-b",
+            "fds-a",
+        ),
+    ];
+    for (var, expected) in cases {
+        let actual = find_jobserver_auth(var).unwrap();
+        assert_eq!(
+            actual, expected,
+            "expect {expected:?}, got {actual:?}, input `{var:?}`"
+        );
+    }
+}

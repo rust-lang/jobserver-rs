@@ -582,10 +582,25 @@ impl HelperState {
     }
 }
 
+/// Finds and returns the value of `--jobserver-auth=<VALUE>` in the given
+/// environment variable.
+///
+/// Precedence rules:
+///
+/// * The last instance wins [^1].
+/// * `--jobserver-fds=` as a fallback when no `--jobserver-auth=` is present [^2].
+///
+/// [^1]: See ["GNU `make` manual: Sharing Job Slots with GNU `make`"](https://www.gnu.org/software/make/manual/make.html#Job-Slots)
+/// _"Be aware that the `MAKEFLAGS` variable may contain multiple instances of
+/// the `--jobserver-auth=` option. Only the last instance is relevant."_
+///
+/// [^2]: Refer to [the release announcement](https://git.savannah.gnu.org/cgit/make.git/tree/NEWS?h=4.2#n31)
+/// of GNU Make 4.2, which states that `--jobserver-fds` was initially an
+/// internal-only flag and was later renamed to `--jobserver-auth`.
 fn find_jobserver_auth(var: &str) -> Option<&str> {
-    ["--jobserver-fds=", "--jobserver-auth="]
+    ["--jobserver-auth=", "--jobserver-fds="]
         .iter()
-        .find_map(|&arg| var.split_once(arg).map(|(_, s)| s))
+        .find_map(|&arg| var.rsplit_once(arg).map(|(_, s)| s))
         .and_then(|s| s.split(' ').next())
 }
 
@@ -599,17 +614,17 @@ fn no_helper_deadlock() {
 #[test]
 fn test_find_jobserver_auth() {
     let cases = [
-        ("--jobserver-auth=auth-a --jobserver-auth=auth-b", "auth-a"),
-        ("--jobserver-auth=auth-b --jobserver-auth=auth-a", "auth-b"),
-        ("--jobserver-fds=fds-a --jobserver-fds=fds-b", "fds-a"),
-        ("--jobserver-fds=fds-b --jobserver-fds=fds-a", "fds-b"),
+        ("--jobserver-auth=auth-a --jobserver-auth=auth-b", "auth-b"),
+        ("--jobserver-auth=auth-b --jobserver-auth=auth-a", "auth-a"),
+        ("--jobserver-fds=fds-a --jobserver-fds=fds-b", "fds-b"),
+        ("--jobserver-fds=fds-b --jobserver-fds=fds-a", "fds-a"),
         (
             "--jobserver-auth=auth-a --jobserver-fds=fds-a --jobserver-auth=auth-b",
-            "fds-a",
+            "auth-b",
         ),
         (
             "--jobserver-fds=fds-a --jobserver-auth=auth-a --jobserver-fds=fds-b",
-            "fds-a",
+            "auth-a",
         ),
     ];
     for (var, expected) in cases {

@@ -279,12 +279,10 @@ impl Client {
             }
         };
 
-        let (arg, pos) = match find_jobserver_auth(var) {
-            Some((arg, pos)) => (arg, pos),
+        let s = match find_jobserver_auth(var) {
+            Some(s) => s,
             None => return FromEnv::new_err(FromEnvErrorInner::NoJobserver, env, var_os),
         };
-
-        let s = var[pos + arg.len()..].split(' ').next().unwrap();
         match imp::Client::open(s, check_pipe) {
             Ok(c) => FromEnv::new_ok(Client { inner: Arc::new(c) }, env, var_os),
             Err(err) => FromEnv::new_err(err, env, var_os),
@@ -584,11 +582,11 @@ impl HelperState {
     }
 }
 
-fn find_jobserver_auth(var: &str) -> Option<(&str, usize)> {
+fn find_jobserver_auth(var: &str) -> Option<&str> {
     ["--jobserver-fds=", "--jobserver-auth="]
         .iter()
-        .map(|&arg| var.find(arg).map(|pos| (arg, pos)))
-        .find_map(|pos| pos)
+        .find_map(|&arg| var.split_once(arg).map(|(_, s)| s))
+        .and_then(|s| s.split(' ').next())
 }
 
 #[test]

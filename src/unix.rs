@@ -130,6 +130,15 @@ impl Client {
             .parse()
             .map_err(|e| FromEnvErrorInner::CannotParse(format!("cannot parse `write` fd: {e}")))?;
 
+        // If either or both of these file descriptors are negative,
+        // it means the jobserver is disabled for this process.
+        if read < 0 {
+            return Err(FromEnvErrorInner::NegativeFd(read));
+        }
+        if write < 0 {
+            return Err(FromEnvErrorInner::NegativeFd(write));
+        }
+
         // Ok so we've got two integers that look like file descriptors, but
         // for extra sanity checking let's see if they actually look like
         // valid files and instances of a pipe if feature enabled before we

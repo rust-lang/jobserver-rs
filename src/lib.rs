@@ -614,21 +614,39 @@ fn no_helper_deadlock() {
 #[test]
 fn test_find_jobserver_auth() {
     let cases = [
-        ("--jobserver-auth=auth-a --jobserver-auth=auth-b", "auth-b"),
-        ("--jobserver-auth=auth-b --jobserver-auth=auth-a", "auth-a"),
-        ("--jobserver-fds=fds-a --jobserver-fds=fds-b", "fds-b"),
-        ("--jobserver-fds=fds-b --jobserver-fds=fds-a", "fds-a"),
+        ("", None),
+        ("-j2", None),
+        ("-j2 --jobserver-auth=3,4", Some("3,4")),
+        ("--jobserver-auth=3,4 -j2", Some("3,4")),
+        ("--jobserver-auth=3,4", Some("3,4")),
+        ("--jobserver-auth=fifo:/myfifo", Some("fifo:/myfifo")),
+        ("--jobserver-auth=", Some("")),
+        ("--jobserver-auth", None),
+        ("--jobserver-fds=3,4", Some("3,4")),
+        ("--jobserver-fds=fifo:/myfifo", Some("fifo:/myfifo")),
+        ("--jobserver-fds=", Some("")),
+        ("--jobserver-fds", None),
+        (
+            "--jobserver-auth=auth-a --jobserver-auth=auth-b",
+            Some("auth-b"),
+        ),
+        (
+            "--jobserver-auth=auth-b --jobserver-auth=auth-a",
+            Some("auth-a"),
+        ),
+        ("--jobserver-fds=fds-a --jobserver-fds=fds-b", Some("fds-b")),
+        ("--jobserver-fds=fds-b --jobserver-fds=fds-a", Some("fds-a")),
         (
             "--jobserver-auth=auth-a --jobserver-fds=fds-a --jobserver-auth=auth-b",
-            "auth-b",
+            Some("auth-b"),
         ),
         (
             "--jobserver-fds=fds-a --jobserver-auth=auth-a --jobserver-fds=fds-b",
-            "auth-a",
+            Some("auth-a"),
         ),
     ];
     for (var, expected) in cases {
-        let actual = find_jobserver_auth(var).unwrap();
+        let actual = find_jobserver_auth(var);
         assert_eq!(
             actual, expected,
             "expect {expected:?}, got {actual:?}, input `{var:?}`"

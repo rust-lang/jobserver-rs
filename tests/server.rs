@@ -99,7 +99,7 @@ bar:
     // token", so we acquire our one token to drain the jobserver, and this
     // should mean that `make` itself never has a second token available to it.
     let _a = c.acquire();
-    c.configure(&mut cmd);
+    // c.configure(&mut cmd);
     let output = t!(cmd.output());
     println!(
         "\n\t=== stderr\n\t\t{}",
@@ -132,7 +132,7 @@ foo
 
 #[test]
 fn make_as_a_multi_thread_client() {
-    let c = t!(Client::new(1));
+    let _c = t!(Client::new(1));
     let td = tempfile::tempdir().unwrap();
 
     let prog = env::var("MAKE").unwrap_or_else(|_| "make".to_string());
@@ -151,7 +151,7 @@ bar:
 
     // We're leaking one extra token to `make` sort of violating the makefile
     // jobserver protocol. It has the desired effect though.
-    c.configure(&mut cmd);
+    // c.configure(&mut cmd);
     let output = t!(cmd.output());
     println!(
         "\n\t=== stderr\n\t\t{}",

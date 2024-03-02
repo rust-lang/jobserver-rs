@@ -324,6 +324,43 @@ impl Client {
         })
     }
 
+    /// Whether [`Self::try_acquire`] is supported.
+    pub fn supports_try_acquire(&self) -> bool {
+        #[cfg(unix)]
+        let is_supported = self.inner.supports_try_acquire();
+
+        #[cfg(not(unix))]
+        let is_supported = true;
+
+        is_supported
+    }
+
+    /// Acquires a token from this jobserver client in a non-blocking way.
+    ///
+    /// # Return value
+    ///
+    /// On successful acquisition of a token an instance of `Acquired` is
+    /// returned. This structure, when dropped, will release the token back to
+    /// the jobserver. It's recommeNded to avoid leaking this value.
+    ///
+    /// # Errors
+    ///
+    /// If an I/O error happens while acquiring a token then this function will
+    /// return immediately with the error. If an error is returned then a token
+    /// was not acquired.
+    ///
+    /// If non-blocking acquire is not supported, the return error will have its `kind()`
+    /// set to [`io::ErrorKind::Unsupported`].
+    pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
+        let ret = self.inner.try_acquire()?;
+
+        Ok(ret.map(|data| Acquired {
+            client: self.inner.clone(),
+            data,
+            disabled: false,
+        }))
+    }
+
     /// Returns amount of tokens in the read-side pipe.
     ///
     /// # Return value

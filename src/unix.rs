@@ -109,6 +109,10 @@ impl Client {
             .write(true)
             .open(path)
             .map_err(|err| FromEnvErrorInner::CannotOpenPath(path_str.to_string(), err))?;
+
+        set_nonblocking(file.as_raw_fd(), true)
+            .map_err(|err| FromEnvErrorInner::CannotSetNonBlocking(file.as_raw_fd(), err))?;
+
         Ok(Some(Client::Fifo {
             file,
             path: path.into(),
@@ -262,6 +266,40 @@ impl Client {
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    pub fn supports_try_acquire(&self) -> bool {
+        matches!(self, Client::Fifo { .. })
+    }
+
+    pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
+        let mut fifo = if let Self::Fifo { file, .. } = self {
+            file
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "jobserver::Client::try_acquire is not supported",
+            ));
+        };
+
+        let mut buf = [0];
+
+        loop {
+            match fifo.read(&mut buf) {
+                Ok(1) => break Ok(Some(Acquired { byte: buf[0] })),
+                Ok(_) => {
+                    break Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "early EOF on jobserver pipe",
+                    ))
+                }
+
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break Ok(None),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+
+                Err(err) => break Err(err),
             }
         }
     }

@@ -544,7 +544,7 @@ extern "C" fn sigusr1_handler(
 mod test {
     use super::Client as ClientImp;
 
-    use crate::Client;
+    use crate::{test::run_named_fifo_try_acquire_tests, Client};
 
     use std::{io::Write, os::fd::AsRawFd, sync::Arc};
 
@@ -562,19 +562,6 @@ mod test {
         Client {
             inner: Arc::new(imp),
         }
-    }
-
-    fn run_named_fifo_try_acquire_tests(client: &Client) {
-        assert!(client.try_acquire().unwrap().is_none());
-        client.release_raw().unwrap();
-
-        assert!(client.supports_try_acquire());
-
-        let acquired = client.try_acquire().unwrap().unwrap();
-        assert!(client.try_acquire().unwrap().is_none());
-
-        drop(acquired);
-        client.try_acquire().unwrap().unwrap();
     }
 
     #[cfg(target_os = "linux")]

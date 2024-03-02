@@ -548,16 +548,6 @@ mod test {
 
     use std::{io::Write, os::fd::AsRawFd, sync::Arc};
 
-    #[cfg(target_os = "linux")]
-    fn is_blocking(fd: &impl AsRawFd) -> std::io::Result<bool> {
-        let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL, 0) };
-        if flags == -1 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok((flags & libc::O_NONBLOCK) != 0)
-        }
-    }
-
     fn from_imp_client(imp: ClientImp) -> Client {
         Client {
             inner: Arc::new(imp),

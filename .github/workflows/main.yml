@@ -10,15 +10,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        rust: ["1.63", stable, beta, nightly]
+        rust: [stable, beta, nightly]
         os: [ubuntu-latest, macos-14, windows-latest]
     steps:
     - uses: actions/checkout@master
     - name: Install Rust (rustup)
-      run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
+      run: |
+        rustup update ${{ matrix.rust }} --no-self-update
+        rustup default ${{ matrix.rust }}
       shell: bash
 
-    - run: cargo +stable update
+    - run: cargo update
 
     - uses: Swatinem/rust-cache@v2
 
@@ -79,3 +81,24 @@ jobs:
           git -c user.name='ci' -c user.email='ci' commit -m init
           git push -f -q https://git:${{ secrets.github_token }}@github.com/${{ github.repository }} HEAD:gh-pages
         if: github.event_name == 'push' && github.event.ref == 'refs/heads/master'
+
+  msrv:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    env:
+      MSRV: 1.63
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust (rustup)
+      run: |
+        rustup update $MSRV --no-self-update
+        rustup default $MSRV
+      shell: bash
+
+    - run: cargo +nightly update -Zminimal
+
+    - uses: Swatinem/rust-cache@v2
+
+    - run: cargo check

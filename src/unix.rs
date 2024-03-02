@@ -539,3 +539,91 @@ extern "C" fn sigusr1_handler(
 ) {
     // nothing to do
 }
+
+#[cfg(test)]
+mod test {
+    use super::Client as ClientImp;
+
+    use crate::Client;
+
+    use std::{io::Write, os::fd::AsRawFd, sync::Arc};
+
+    #[cfg(target_os = "linux")]
+    fn is_blocking(fd: &impl AsRawFd) -> std::io::Result<bool> {
+        let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL, 0) };
+        if flags == -1 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok((flags & libc::O_NONBLOCK) != 0)
+        }
+    }
+
+    fn from_imp_client(imp: ClientImp) -> Client {
+        Client {
+            inner: Arc::new(imp),
+        }
+    }
+
+    fn run_named_fifo_try_acquire_tests(client: &Client) {
+        assert!(client.try_acquire().unwrap().is_none());
+        client.release_raw().unwrap();
+
+        assert!(client.supports_try_acquire());
+
+        let acquired = client.try_acquire().unwrap().unwrap();
+        assert!(client.try_acquire().unwrap().is_none());
+
+        drop(acquired);
+        client.try_acquire().unwrap().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_try_acquire_named_fifo_from_annoymous_pipe_linux() {
+        let (read, write) = os_pipe::pipe().unwrap();
+
+        let client = unsafe {
+            ClientImp::from_pipe(&format!("{},{}", read.as_raw_fd(), write.as_raw_fd()), true)
+        }
+        .unwrap()
+        .map(from_imp_client)
+        .unwrap();
+
+        run_named_fifo_try_acquire_tests(&client);
+
+        assert!(!is_blocking(&read).unwrap());
+        assert!(!is_blocking(&write).unwrap());
+    }
+
+    #[test]
+    fn test_try_acquire_named_fifo() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let fifo_path = file.path().to_owned();
+        file.close().unwrap(); // Remove the NamedTempFile to create fifo
+
+        nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::S_IRWXU).unwrap();
+
+        let client = ClientImp::from_fifo(&format!("fifo:{}", fifo_path.to_str().unwrap()))
+            .unwrap()
+            .map(from_imp_client)
+            .unwrap();
+
+        run_named_fifo_try_acquire_tests(&client);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn test_try_acquire_named_fifo_from_annoymous_pipe_linux() {
+        let (read, mut write) = os_pipe::pipe().unwrap();
+        write.write_all(b"1").unwrap();
+
+        let client = unsafe {
+            ClientImp::from_pipe(&format!("{},{}", read.as_raw_fd(), write.as_raw_fd()), true)
+        }
+        .unwrap()
+        .map(from_imp_client)
+        .unwrap();
+
+        assert!(!client.supports_try_acquire());
+    }
+}

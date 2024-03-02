@@ -155,6 +155,14 @@ impl Client {
             (read_err, write_err) => {
                 read_err?;
                 write_err?;
+
+                #[cfg(target_os = "linux")]
+                // Optimization: Try converting it to a fifo by using /dev/fd
+                if let Ok(Some(jobserver)) =
+                    Self::from_fifo(&format!("/dev/fd/{}", read.as_raw_fd()))
+                {
+                    return Ok(Some(jobserver));
+                }
             }
         }
 

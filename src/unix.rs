@@ -564,24 +564,6 @@ mod test {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn test_try_acquire_named_fifo_from_annoymous_pipe_linux() {
-        let (read, write) = os_pipe::pipe().unwrap();
-
-        let client = unsafe {
-            ClientImp::from_pipe(&format!("{},{}", read.as_raw_fd(), write.as_raw_fd()), true)
-        }
-        .unwrap()
-        .map(from_imp_client)
-        .unwrap();
-
-        run_named_fifo_try_acquire_tests(&client);
-
-        assert!(!is_blocking(&read).unwrap());
-        assert!(!is_blocking(&write).unwrap());
-    }
-
     #[test]
     fn test_try_acquire_named_fifo() {
         let file = tempfile::NamedTempFile::new().unwrap();

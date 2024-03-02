@@ -29,7 +29,7 @@ jobs:
 
     # Compile it from source (temporarily)
     - name: Make GNU Make from source
-      if: ${{ !startsWith(matrix.os, 'windows') }} && steps.cache-make.outputs.cache-hit != 'true'
+      if: ${{ !startsWith(matrix.os, 'windows') && steps.cache-make.outputs.cache-hit != 'true' }}
       env:
         VERSION: "4.4.1"
       shell: bash

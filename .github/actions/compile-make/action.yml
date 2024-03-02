@@ -20,7 +20,6 @@ runs:
         path: /usr/local/bin/make-${{ inputs.version }}
         key: v1-${{ runner.os }}-make-${{ inputs.version }}
 
-    # Compile it from source (temporarily)
     - name: Make GNU Make from source
       if: ${{ !startsWith(runner.os, 'windows') && steps.cache-make.outputs.cache-hit != 'true' }}
       env:

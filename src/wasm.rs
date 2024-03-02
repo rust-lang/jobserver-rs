@@ -45,6 +45,16 @@ impl Client {
         Ok(Acquired(()))
     }
 
+    pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
+        let mut lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
+        if *lock == 0 {
+            None
+        } else {
+            *lock -= 1;
+            Ok(Acquired(()))
+        }
+    }
+
     pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
         let mut lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
         *lock += 1;

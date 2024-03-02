@@ -26,7 +26,11 @@ const INFINITE: DWORD = 0xffffffff;
 const SEMAPHORE_MODIFY_STATE: DWORD = 0x2;
 const SYNCHRONIZE: DWORD = 0x00100000;
 const TRUE: BOOL = 1;
-const WAIT_OBJECT_0: DWORD = 0;
+
+const WAIT_ABANDONED: DWORD = 128u32;
+const WAIT_FAILED: DWORD = 4294967295u32;
+const WAIT_OBJECT_0: DWORD = 0u32;
+const WAIT_TIMEOUT: DWORD = 258u32;
 
 extern "system" {
     fn CloseHandle(handle: HANDLE) -> BOOL;
@@ -156,6 +160,21 @@ impl Client {
             } else {
                 Err(io::Error::last_os_error())
             }
+        }
+    }
+
+    pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
+        match unsafe { WaitForSingleObject(self.sem.0, 0) } {
+            WAIT_OBJECT_0 => Ok(Some(Acquired)),
+            WAIT_TIMEOUT => Ok(None),
+            WAIT_FAILED => Err(io::Error::last_os_error()),
+            // We believe this should be impossible for a semaphore, but still
+            // check the error code just in case it happens.
+            WAIT_ABANDONED => Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Wait on jobserver semaphore returned WAIT_ABANDONED",
+            )),
+            _ => unreachable!("Unexpected return value from WaitForSingleObject"),
         }
     }
 

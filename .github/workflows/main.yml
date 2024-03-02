@@ -18,6 +18,8 @@ jobs:
       run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
       shell: bash
 
+    - run: cargo +stable update
+
     - uses: Swatinem/rust-cache@v2
 
     - run: cargo test

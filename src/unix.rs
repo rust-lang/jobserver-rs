@@ -446,10 +446,10 @@ unsafe fn fd_check(fd: c_int, check_pipe: bool) -> Result<(), FromEnvErrorInner>
 }
 
 fn clone_fd_and_set_cloexec(fd: c_int) -> Result<File, FromEnvErrorInner> {
-    // Safety: File is wrapped in `ManuallyDrop` to prevent closing on drop
-    // since we don't own the fd.
-    mem::ManuallyDrop::new(unsafe { File::from_raw_fd(fd) })
-        .try_clone()
+    // Safety: fd is a valid fd dand it remains open until returns
+    unsafe { BorrowedFd::borrow_raw(fd) }
+        .try_clone_to_owned()
+        .map(File::from)
         .map_err(|err| FromEnvErrorInner::CannotOpenFd(fd, err))
 }
 

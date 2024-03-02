@@ -17,25 +17,34 @@ jobs:
 
     - run: cargo test
 
+    - name: Cache make compiled
+      if: ${{ !startsWith(matrix.os, 'windows') }}
+      id: cache-make
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/make
+        key: ${{ runner.os }}-make-4.4.1
+
     # Compile it from source (temporarily)
     - name: Make GNU Make from source
-      if: ${{ !startsWith(matrix.os, 'windows') }}
+      if: ${{ !startsWith(matrix.os, 'windows') }} && steps.cache-make.outputs.cache-hit != 'true'
       env:
         VERSION: "4.4.1"
       shell: bash
       run: |
-        wget -q "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz"
-        tar zxf "make-${VERSION}.tar.gz"
+        curl "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz" | tar xz
         pushd "make-${VERSION}"
         ./configure
-        make
+        make -j 4
         popd
-        cp -rp "make-${VERSION}/make" .
+        cp -p "make-${VERSION}/make" /usr/local/bin
+
     - name: Test against GNU Make from source
       if: ${{ !startsWith(matrix.os, 'windows') }}
       shell: bash
-      run:
-        MAKE="${PWD}/make" cargo test
+      run: cargo test
+      env:
+        MAKE: /usr/local/bin/make
 
   rustfmt:
     name: Rustfmt

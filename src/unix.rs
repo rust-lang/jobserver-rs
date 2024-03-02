@@ -546,7 +546,7 @@ mod test {
 
     use crate::{test::run_named_fifo_try_acquire_tests, Client};
 
-    use std::{io::Write, os::fd::AsRawFd, sync::Arc};
+    use std::{io::Write, os::unix::io::AsRawFd, sync::Arc};
 
     fn from_imp_client(imp: ClientImp) -> Client {
         Client {

@@ -16,7 +16,7 @@ jobs:
     - uses: actions/checkout@master
     - name: Install Rust (rustup)
       run: |
-        rustup update ${{ matrix.rust }} --no-self-update
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile minimal
         rustup default ${{ matrix.rust }}
       shell: bash
 
@@ -93,8 +93,9 @@ jobs:
     - uses: actions/checkout@master
     - name: Install Rust (rustup)
       run: |
-        rustup update $MSRV --no-self-update
+        rustup toolchain install $MSRV --no-self-update --profile minimal
         rustup default $MSRV
+        rustup toolchain install nightly --no-self-update --profile minimal
       shell: bash
 
     - run: cargo +nightly update -Zminimal

@@ -98,7 +98,7 @@ jobs:
         rustup toolchain install nightly --no-self-update --profile minimal
       shell: bash
 
-    - run: cargo +nightly update -Zminimal
+    - run: cargo +nightly update -Zminimal-versions
 
     - uses: Swatinem/rust-cache@v2
 

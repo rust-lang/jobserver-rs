@@ -160,8 +160,15 @@ impl Client {
                 read_err?;
                 write_err?;
 
-                #[cfg(target_os = "linux")]
                 // Optimization: Try converting it to a fifo by using /dev/fd
+                //
+                // On linux, opening `/dev/fd/$fd` returns a fd with a new file description,
+                // so we can set `O_NONBLOCK` on it without affecting other processes.
+                //
+                // On macOS, opening `/dev/fd/$fd` seems to be the same as `File::try_clone`.
+                //
+                // I tested this on macOS 14 and Linux 6.5.13
+                #[cfg(target_os = "linux")]
                 if let Ok(Some(jobserver)) =
                     Self::from_fifo(&format!("/dev/fd/{}", read.as_raw_fd()))
                 {

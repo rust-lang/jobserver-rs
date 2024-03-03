@@ -109,8 +109,8 @@ mod imp;
 /// Some usage examples can be found in the crate documentation for using a
 /// client.
 ///
-/// Note that a `Client` implements the `Clone` trait, and all instances of a
-/// `Client` refer to the same jobserver instance.
+/// Note that a [`Client`] implements the [`Clone`] trait, and all instances of
+/// a [`Client`] refer to the same jobserver instance.
 #[derive(Clone, Debug)]
 pub struct Client {
     inner: Arc<imp::Client>,
@@ -128,13 +128,13 @@ pub struct Acquired {
 }
 
 impl Acquired {
-    /// This drops the `Acquired` token without releasing the associated token.
+    /// This drops the [`Acquired`] token without releasing the associated token.
     ///
     /// This is not generally useful, but can be helpful if you do not have the
     /// ability to store an Acquired token but need to not yet release it.
     ///
-    /// You'll typically want to follow this up with a call to `release_raw` or
-    /// similar to actually release the token later on.
+    /// You'll typically want to follow this up with a call to
+    /// [`Client::release_raw`] or similar to actually release the token later on.
     pub fn drop_without_releasing(mut self) {
         self.disabled = true;
     }
@@ -156,7 +156,7 @@ struct HelperInner {
 use error::FromEnvErrorInner;
 pub use error::{FromEnvError, FromEnvErrorKind};
 
-/// Return type for `from_env_ext` function.
+/// Return type for [`Client::from_env_ext`] function.
 #[derive(Debug)]
 pub struct FromEnv {
     /// Result of trying to get jobserver client from env.
@@ -186,12 +186,12 @@ impl Client {
     ///
     /// A client to the jobserver created will be returned. This client will
     /// allow at most `limit` tokens to be acquired from it in parallel. More
-    /// calls to `acquire` will cause the calling thread to block.
+    /// calls to [`Client::acquire`] will cause the calling thread to block.
     ///
-    /// Note that the created `Client` is not automatically inherited into
+    /// Note that the created [`Client`] is not automatically inherited into
     /// spawned child processes from this program. Manual usage of the
-    /// `configure` function is required for a child process to have access to a
-    /// job server.
+    /// [`Client::configure`] function is required for a child process to have
+    /// access to a job server.
     ///
     /// # Examples
     ///
@@ -219,14 +219,14 @@ impl Client {
     /// it's passing down. This function will attempt to look for these details
     /// and connect to the jobserver.
     ///
-    /// Note that the created `Client` is not automatically inherited into
+    /// Note that the created [`Client`] is not automatically inherited into
     /// spawned child processes from this program. Manual usage of the
-    /// `configure` function is required for a child process to have access to a
-    /// job server.
+    /// [`Client::configure`] function is required for a child process to have
+    /// access to a job server.
     ///
     /// # Return value
     ///
-    /// `FromEnv` contains result and relevant environment variable.
+    /// [`FromEnv`] contains result and relevant environment variable.
     /// If a jobserver was found in the environment and it looks correct then
     /// result with the connected client will be returned. In other cases
     /// result will contain `Err(FromEnvErr)`.
@@ -281,7 +281,7 @@ impl Client {
     /// Attempts to connect to the jobserver specified in this process's
     /// environment.
     ///
-    /// Wraps `from_env_ext` and discards error details.
+    /// Wraps [`Client::from_env_ext`] and discards error details.
     ///
     /// # Safety
     ///
@@ -306,7 +306,7 @@ impl Client {
     ///
     /// # Return value
     ///
-    /// On successful acquisition of a token an instance of `Acquired` is
+    /// On successful acquisition of a token an instance of [`Acquired`] is
     /// returned. This structure, when dropped, will release the token back to
     /// the jobserver. It's recommended to avoid leaking this value.
     ///
@@ -342,9 +342,10 @@ impl Client {
     ///
     /// This function is required to be called to ensure that a jobserver is
     /// properly inherited to a child process. If this function is *not* called
-    /// then this `Client` will not be accessible in the child process. In other
-    /// words, if not called, then `Client::from_env` will return `None` in the
-    /// child process (or the equivalent of `Child::from_env` that `make` uses).
+    /// then this [`Client`] will not be accessible in the child process. In
+    /// other words, if not called, then [`Client::from_env`] will return `None`
+    /// in the child process (or the equivalent of [`Client::from_env`] that
+    /// `make` uses).
     ///
     /// ## Platform-specific behavior
     ///
@@ -363,9 +364,10 @@ impl Client {
     ///
     /// This function is required to be called to ensure that a jobserver is
     /// properly inherited to a child process. If this function is *not* called
-    /// then this `Client` will not be accessible in the child process. In other
-    /// words, if not called, then `Client::from_env` will return `None` in the
-    /// child process (or the equivalent of `Child::from_env` that `make` uses).
+    /// then this [`Client`] will not be accessible in the child process. In
+    /// other words, if not called, then [`Client::from_env`] will return `None`
+    /// in the child process (or the equivalent of [`Client::from_env`] that
+    /// `make` uses).
     ///
     /// ## Platform-specific behavior
     ///
@@ -391,19 +393,18 @@ impl Client {
         format!("-j --jobserver-fds={0} --jobserver-auth={0}", arg)
     }
 
-    /// Converts this `Client` into a helper thread to deal with a blocking
-    /// `acquire` function a little more easily.
+    /// Converts this [`Client`] into a helper thread to deal with a blocking
+    /// [`Client::acquire`] function a little more easily.
     ///
-    /// The fact that the `acquire` function on `Client` blocks isn't always
-    /// the easiest to work with. Typically you're using a jobserver to
-    /// manage running other events in parallel! This means that you need to
-    /// either (a) wait for an existing job to finish or (b) wait for a
-    /// new token to become available.
+    /// The fact that the [`Client::acquire`] isn't always the easiest to work
+    /// with. Typically you're using a jobserver to manage running other events
+    /// in parallel! This means that you need to either (a) wait for an existing
+    /// job to finish or (b) wait for a new token to become available.
     ///
-    /// Unfortunately the blocking in `acquire` happens at the implementation
-    /// layer of jobservers. On Unix this requires a blocking call to `read`
-    /// and on Windows this requires one of the `WaitFor*` functions. Both
-    /// of these situations aren't the easiest to deal with:
+    /// Unfortunately the blocking in [`Client::acquire`] happens at the
+    /// implementation layer of jobservers. On Unix this requires a blocking
+    /// call to `read` and on Windows this requires one of the `WaitFor*`
+    /// functions. Both of these situations aren't the easiest to deal with:
     ///
     /// * On Unix there's basically only one way to wake up a `read` early, and
     ///   that's through a signal. This is what the `make` implementation
@@ -419,7 +420,7 @@ impl Client {
     ///   unfortunately.
     ///
     /// This function essentially attempts to ease these limitations by
-    /// converting this `Client` into a helper thread spawned into this
+    /// converting this [`Client`] into a helper thread spawned into this
     /// process. The application can then request that the helper thread
     /// acquires tokens and the provided closure will be invoked for each token
     /// acquired.
@@ -429,23 +430,23 @@ impl Client {
     ///
     /// # Arguments
     ///
-    /// This function will consume the `Client` provided to be transferred to
+    /// This function will consume the [`Client`] provided to be transferred to
     /// the helper thread that is spawned. Additionally a closure `f` is
     /// provided to be invoked whenever a token is acquired.
     ///
     /// This closure is only invoked after calls to
-    /// `HelperThread::request_token` have been made and a token itself has
+    /// [`HelperThread::request_token`] have been made and a token itself has
     /// been acquired. If an error happens while acquiring the token then
     /// an error will be yielded to the closure as well.
     ///
     /// # Return Value
     ///
-    /// This function will return an instance of the `HelperThread` structure
+    /// This function will return an instance of the [`HelperThread`] structure
     /// which is used to manage the helper thread associated with this client.
-    /// Through the `HelperThread` you'll request that tokens are acquired.
+    /// Through the [`HelperThread`] you'll request that tokens are acquired.
     /// When acquired, the closure provided here is invoked.
     ///
-    /// When the `HelperThread` structure is returned it will be gracefully
+    /// When the [`HelperThread`] structure is returned it will be gracefully
     /// torn down, and the calling thread will be blocked until the thread is
     /// torn down (which should be prompt).
     ///
@@ -482,9 +483,9 @@ impl Client {
 
     /// Blocks the current thread until a token is acquired.
     ///
-    /// This is the same as `acquire`, except that it doesn't return an RAII
-    /// helper. If successful the process will need to guarantee that
-    /// `release_raw` is called in the future.
+    /// This is the same as [`Client::acquire`], except that it doesn't return
+    /// an RAII helper. If successful the process will need to guarantee that
+    /// [`Client::release_raw`] is called in the future.
     pub fn acquire_raw(&self) -> io::Result<()> {
         self.inner.acquire()?;
         Ok(())
@@ -492,9 +493,9 @@ impl Client {
 
     /// Releases a jobserver token back to the original jobserver.
     ///
-    /// This is intended to be paired with `acquire_raw` if it was called, but
-    /// in some situations it could also be called to relinquish a process's
-    /// implicit token temporarily which is then re-acquired later.
+    /// This is intended to be paired with [`Client::acquire_raw`] if it was
+    /// called, but in some situations it could also be called to relinquish a
+    /// process's implicit token temporarily which is then re-acquired later.
     pub fn release_raw(&self) -> io::Result<()> {
         self.inner.release(None)?;
         Ok(())
@@ -509,7 +510,7 @@ impl Drop for Acquired {
     }
 }
 
-/// Structure returned from `Client::into_helper_thread` to manage the lifetime
+/// Structure returned from [`Client::into_helper_thread`] to manage the lifetime
 /// of the helper thread returned, see those associated docs for more info.
 #[derive(Debug)]
 pub struct HelperThread {
@@ -521,7 +522,7 @@ impl HelperThread {
     /// Request that the helper thread acquires a token, eventually calling the
     /// original closure with a token when it's available.
     ///
-    /// For more information, see the docs on that function.
+    /// For more information, see the docs on [`Client::into_helper_thread`].
     pub fn request_token(&self) {
         // Indicate that there's one more request for a token and then wake up
         // the helper thread if it's sleeping.

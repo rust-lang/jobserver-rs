@@ -3,13 +3,17 @@ type RawFd = std::os::unix::io::RawFd;
 #[cfg(not(unix))]
 type RawFd = std::convert::Infallible;
 
-/// Error type for `from_env_ext` function.
+/// Error type for [`Client::from_env_ext`] function.
+///
+/// [`Client::from_env_ext`]: crate::Client::from_env_ext
 #[derive(Debug)]
 pub struct FromEnvError {
     pub(crate) inner: FromEnvErrorInner,
 }
 
-/// Kind of an error returned from `from_env_ext` function.
+/// Kind of an error returned from [`Client::from_env_ext`] function.
+///
+/// [`Client::from_env_ext`]: crate::Client::from_env_ext
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum FromEnvErrorKind {

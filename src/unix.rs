@@ -158,9 +158,10 @@ impl Client {
             }
         }
 
-        drop(set_cloexec(read, true));
-        drop(set_cloexec(write, true));
-        Ok(Some(Client::from_fds(read, write)))
+        Ok(Some(Client::Pipe {
+            read: clone_fd_and_set_cloexec(read)?,
+            write: clone_fd_and_set_cloexec(write)?,
+        }))
     }
 
     unsafe fn from_fds(read: c_int, write: c_int) -> Client {
@@ -442,6 +443,14 @@ unsafe fn fd_check(fd: c_int, check_pipe: bool) -> Result<(), FromEnvErrorInner>
     } else {
         fcntl_check(fd)
     }
+}
+
+fn clone_fd_and_set_cloexec(fd: c_int) -> Result<File, FromEnvErrorInner> {
+    // Safety: fd is a valid fd dand it remains open until returns
+    unsafe { BorrowedFd::borrow_raw(fd) }
+        .try_clone_to_owned()
+        .map(File::from)
+        .map_err(|err| FromEnvErrorInner::CannotOpenFd(fd, err))
 }
 
 fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {

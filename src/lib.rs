@@ -231,13 +231,6 @@ impl Client {
     /// result with the connected client will be returned. In other cases
     /// result will contain `Err(FromEnvErr)`.
     ///
-    /// Note that on Unix the `Client` returned **takes ownership of the file
-    /// descriptors specified in the environment**. Jobservers on Unix are
-    /// implemented with `pipe` file descriptors, and they're inherited from
-    /// parent processes. This `Client` returned takes ownership of the file
-    /// descriptors for this process and will close the file descriptors after
-    /// this value is dropped.
-    ///
     /// Additionally on Unix this function will configure the file descriptors
     /// with `CLOEXEC` so they're not automatically inherited by spawned
     /// children.
@@ -256,11 +249,7 @@ impl Client {
     /// make sure to take ownership properly of the file descriptors passed
     /// down, if any.
     ///
-    /// It's generally unsafe to call this function twice in a program if the
-    /// previous invocation returned `Some`.
-    ///
-    /// Note, though, that on Windows it should be safe to call this function
-    /// any number of times.
+    /// It is ok to call this function any number of times.
     pub unsafe fn from_env_ext(check_pipe: bool) -> FromEnv {
         let (env, var_os) = match ["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"]
             .iter()
@@ -293,6 +282,19 @@ impl Client {
     /// environment.
     ///
     /// Wraps `from_env_ext` and discards error details.
+    ///
+    /// # Safety
+    ///
+    /// This function is `unsafe` to call on Unix specifically as it
+    /// transitively requires usage of the `from_raw_fd` function, which is
+    /// itself unsafe in some circumstances.
+    ///
+    /// It's recommended to call this function very early in the lifetime of a
+    /// program before any other file descriptors are opened. That way you can
+    /// make sure to take ownership properly of the file descriptors passed
+    /// down, if any.
+    ///
+    /// It is ok to call this function any number of times.
     pub unsafe fn from_env() -> Option<Client> {
         Self::from_env_ext(false).client.ok()
     }

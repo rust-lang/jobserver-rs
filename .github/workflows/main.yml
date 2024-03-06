@@ -94,8 +94,6 @@ jobs:
       shell: bash
 
     - uses: taiki-e/install-action@cargo-hack
-
-    - run: mv Cargo.msrv.lock Cargo.lock
     - uses: Swatinem/rust-cache@v2
 
     - run: cargo hack check --lib --rust-version --ignore-private

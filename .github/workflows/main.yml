@@ -20,11 +20,9 @@ jobs:
         rustup default ${{ matrix.rust }}
       shell: bash
 
-    - run: cargo update
-
     - uses: Swatinem/rust-cache@v2
 
-    - run: cargo test
+    - run: cargo test --locked
 
     - name: Cache make compiled
       if: ${{ !startsWith(matrix.os, 'windows') }}
@@ -51,7 +49,7 @@ jobs:
     - name: Test against GNU Make from source
       if: ${{ !startsWith(matrix.os, 'windows') }}
       shell: bash
-      run: cargo test
+      run: cargo test --locked
       env:
         MAKE: /usr/local/bin/make
 
@@ -96,4 +94,4 @@ jobs:
     - uses: taiki-e/install-action@cargo-hack
     - uses: Swatinem/rust-cache@v2
 
-    - run: cargo hack check --lib --rust-version --ignore-private
+    - run: cargo hack check --lib --rust-version --ignore-private --locked

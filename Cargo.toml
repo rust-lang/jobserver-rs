@@ -13,7 +13,7 @@ edition = "2021"
 rust-version = "1.63"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.50"
+libc = "0.2.72"
 
 [dev-dependencies]
 tempfile = "3"

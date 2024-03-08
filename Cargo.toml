@@ -16,11 +16,7 @@ rust-version = "1.63"
 libc = "0.2.50"
 
 [dev-dependencies]
-futures = "0.1"
-num_cpus = "1.0"
 tempfile = "3"
-tokio-core = "0.1"
-tokio-process = "0.2"
 
 [[test]]
 name = "client"

@@ -1,41 +1,57 @@
 name: CI
 on: [push, pull_request]
 
+env:
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
 jobs:
   test:
     name: Test
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        rust: ["1.63", stable, beta, nightly]
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable, beta, nightly]
+        os: [ubuntu-latest, macos-14, windows-latest]
     steps:
     - uses: actions/checkout@master
     - name: Install Rust (rustup)
-      run: rustup update ${{ matrix.rust }} --no-self-update && rustup default ${{ matrix.rust }}
+      run: |
+        rustup toolchain install ${{ matrix.rust }} --no-self-update --profile minimal
+        rustup default ${{ matrix.rust }}
       shell: bash
 
-    - run: cargo test
+    - uses: Swatinem/rust-cache@v2
+
+    - run: cargo test --locked
+
+    - name: Cache make compiled
+      if: ${{ !startsWith(matrix.os, 'windows') }}
+      id: cache-make
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/make
+        key: ${{ runner.os }}-make-4.4.1
 
     # Compile it from source (temporarily)
     - name: Make GNU Make from source
-      if: ${{ !startsWith(matrix.os, 'windows') }}
+      if: ${{ !startsWith(matrix.os, 'windows') && steps.cache-make.outputs.cache-hit != 'true' }}
       env:
         VERSION: "4.4.1"
       shell: bash
       run: |
-        wget -q "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz"
-        tar zxf "make-${VERSION}.tar.gz"
+        curl "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz" | tar xz
         pushd "make-${VERSION}"
         ./configure
-        make
+        make -j 4
         popd
-        cp -rp "make-${VERSION}/make" .
+        cp -p "make-${VERSION}/make" /usr/local/bin
+
     - name: Test against GNU Make from source
       if: ${{ !startsWith(matrix.os, 'windows') }}
       shell: bash
-      run:
-        MAKE="${PWD}/make" cargo test
+      run: cargo test --locked
+      env:
+        MAKE: /usr/local/bin/make
 
   rustfmt:
     name: Rustfmt
@@ -63,3 +79,19 @@ jobs:
           git -c user.name='ci' -c user.email='ci' commit -m init
           git push -f -q https://git:${{ secrets.github_token }}@github.com/${{ github.repository }} HEAD:gh-pages
         if: github.event_name == 'push' && github.event.ref == 'refs/heads/master'
+
+  msrv:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+    - uses: actions/checkout@master
+    - name: Install Rust (rustup)
+      run: rustup toolchain install nightly --no-self-update --profile minimal
+      shell: bash
+
+    - uses: taiki-e/install-action@cargo-hack
+    - uses: Swatinem/rust-cache@v2
+
+    - run: cargo hack check --lib --rust-version --ignore-private --locked

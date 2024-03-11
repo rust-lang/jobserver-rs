@@ -13,14 +13,10 @@ edition = "2021"
 rust-version = "1.63"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.50"
+libc = "0.2.72"
 
 [dev-dependencies]
-futures = "0.1"
-num_cpus = "1.0"
-tempfile = "3"
-tokio-core = "0.1"
-tokio-process = "0.2"
+tempfile = "3.10.1"
 
 [[test]]
 name = "client"

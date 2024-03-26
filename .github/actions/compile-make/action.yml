@@ -31,7 +31,7 @@ runs:
         curl "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz" | tar xz
         pushd "make-${VERSION}"
         ./configure
-        [[ "$WORKAROUND" = "true" ]] && sed -i 's/#if !defined __alloca \&\& !defined __GNU_LIBRARY__/#if !defined __alloca \&\& defined __GNU_LIBRARY__/g; s/#ifndef __GNU_LIBRARY__/#ifdef __GNU_LIBRARY__/g' "./glob/glob.c"`
+        [[ "$WORKAROUND" = "true" ]] && sed -i 's/#if !defined __alloca \&\& !defined __GNU_LIBRARY__/#if !defined __alloca \&\& defined __GNU_LIBRARY__/g; s/#ifndef __GNU_LIBRARY__/#ifdef __GNU_LIBRARY__/g' "./glob/glob.c"
         make -j 4
         popd
         cp -p "make-${VERSION}/make" "/usr/local/bin/make-${VERSION}"

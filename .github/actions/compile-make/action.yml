@@ -27,4 +27,4 @@ runs:
         ./configure
         make -j 4
         popd
-        cp -p "make-${VERSION}/make" "/usr/local/bin-${VERSION}"
+        cp -p "make-${VERSION}/make" "/usr/local/bin/make-${VERSION}"

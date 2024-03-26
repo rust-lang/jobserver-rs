@@ -170,7 +170,7 @@ impl Client {
                 // I tested this on macOS 14 and Linux 6.5.13
                 #[cfg(target_os = "linux")]
                 if let Ok(Some(jobserver)) =
-                    Self::from_fifo(&format!("/dev/fd/{}", read.as_raw_fd()))
+                    Self::from_fifo(&format!("fifo:/dev/fd/{}", read.as_raw_fd()))
                 {
                     return Ok(Some(jobserver));
                 }

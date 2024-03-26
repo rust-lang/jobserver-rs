@@ -1,0 +1,30 @@
+name: Compile make
+inputs:
+  version:
+    description: make version
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cache make compiled
+      if: ${{ !startsWith(runner.os, 'windows') }}
+      id: cache-maka
+      uses: actions/cache@v4
+      with:
+        path: /usr/local/bin/make-${{ inputs.version }}
+        key: v1-${{ runner.os }}-make-${{ inputs.version }}
+
+    # Compile it from source (temporarily)
+    - name: Make GNU Make from source
+      if: ${{ !startsWith(runner.os, 'windows') && steps.cache-make.outputs.cache-hit != 'true' }}
+      env:
+        VERSION: ${{ inputs.version }}
+      shell: bash
+      run: |
+        curl "https://ftp.gnu.org/gnu/make/make-${VERSION}.tar.gz" | tar xz
+        pushd "make-${VERSION}"
+        ./configure
+        make -j 4
+        popd
+        cp -p "make-${VERSION}/make" "/usr/local/bin-${VERSION}"

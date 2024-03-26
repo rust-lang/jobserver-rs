@@ -36,17 +36,17 @@ jobs:
         env:
           MAKE: /usr/local/bin/make-4.4.1
 
-      - name: Compile make 4.0
+      - name: Compile make 4.2.1
         uses: ./.github/actions/compile-make
         with:
-          version: "4.0"
+          version: "4.2.1"
 
-      - name: Test against GNU Make 4.0
+      - name: Test against GNU Make 4.2.1
         if: ${{ !startsWith(matrix.os, 'windows') }}
         shell: bash
         run: cargo test --locked
         env:
-          MAKE: /usr/local/bin/make-4.0
+          MAKE: /usr/local/bin/make-4.2.1
 
   rustfmt:
     name: Rustfmt

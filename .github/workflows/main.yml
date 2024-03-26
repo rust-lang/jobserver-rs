@@ -40,6 +40,7 @@ jobs:
         uses: ./.github/actions/compile-make
         with:
           version: "3.82"
+          workaround: "true"
 
       - name: Test against GNU Make 3.82
         if: ${{ !startsWith(matrix.os, 'windows') }}

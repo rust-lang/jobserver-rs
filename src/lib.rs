@@ -324,7 +324,7 @@ impl Client {
         })
     }
 
-    /// Whether [`Self::try_acquire`] is supported.
+    /// Whether [`Client::try_acquire`] is supported.
     pub fn supports_try_acquire(&self) -> bool {
         #[cfg(unix)]
         let is_supported = self.inner.supports_try_acquire();
@@ -339,9 +339,9 @@ impl Client {
     ///
     /// # Return value
     ///
-    /// On successful acquisition of a token an instance of `Acquired` is
+    /// On successful acquisition of a token an instance of [`Acquired`] is
     /// returned. This structure, when dropped, will release the token back to
-    /// the jobserver. It's recommeNded to avoid leaking this value.
+    /// the jobserver. It's recommended to avoid leaking this value.
     ///
     /// # Errors
     ///

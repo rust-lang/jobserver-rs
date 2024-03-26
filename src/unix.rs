@@ -109,6 +109,10 @@ impl Client {
             .write(true)
             .open(path)
             .map_err(|err| FromEnvErrorInner::CannotOpenPath(path_str.to_string(), err))?;
+
+        set_nonblocking(file.as_raw_fd(), true)
+            .map_err(|err| FromEnvErrorInner::CannotSetNonBlocking(file.as_raw_fd(), err))?;
+
         Ok(Some(Client::Fifo {
             file,
             path: path.into(),
@@ -155,6 +159,21 @@ impl Client {
             (read_err, write_err) => {
                 read_err?;
                 write_err?;
+
+                // Optimization: Try converting it to a fifo by using /dev/fd
+                //
+                // On linux, opening `/dev/fd/$fd` returns a fd with a new file description,
+                // so we can set `O_NONBLOCK` on it without affecting other processes.
+                //
+                // On macOS, opening `/dev/fd/$fd` seems to be the same as `File::try_clone`.
+                //
+                // I tested this on macOS 14 and Linux 6.5.13
+                #[cfg(target_os = "linux")]
+                if let Ok(Some(jobserver)) =
+                    Self::from_fifo(&format!("fifo:/dev/fd/{}", read.as_raw_fd()))
+                {
+                    return Ok(Some(jobserver));
+                }
             }
         }
 
@@ -254,6 +273,40 @@ impl Client {
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    pub fn supports_try_acquire(&self) -> bool {
+        matches!(self, Client::Fifo { .. })
+    }
+
+    pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
+        let mut fifo = if let Self::Fifo { file, .. } = self {
+            file
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "jobserver::Client::try_acquire is not supported",
+            ));
+        };
+
+        let mut buf = [0];
+
+        loop {
+            match fifo.read(&mut buf) {
+                Ok(1) => break Ok(Some(Acquired { byte: buf[0] })),
+                Ok(_) => {
+                    break Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        "early EOF on jobserver pipe",
+                    ))
+                }
+
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break Ok(None),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+
+                Err(err) => break Err(err),
             }
         }
     }
@@ -492,4 +545,51 @@ extern "C" fn sigusr1_handler(
     _ptr: *mut libc::c_void,
 ) {
     // nothing to do
+}
+
+#[cfg(test)]
+mod test {
+    use super::Client as ClientImp;
+
+    use crate::{test::run_named_fifo_try_acquire_tests, Client};
+
+    use std::{io::Write, os::unix::io::AsRawFd, sync::Arc};
+
+    fn from_imp_client(imp: ClientImp) -> Client {
+        Client {
+            inner: Arc::new(imp),
+        }
+    }
+
+    #[test]
+    fn test_try_acquire_named_fifo() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let fifo_path = file.path().to_owned();
+        file.close().unwrap(); // Remove the NamedTempFile to create fifo
+
+        nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::S_IRWXU).unwrap();
+
+        let client = ClientImp::from_fifo(&format!("fifo:{}", fifo_path.to_str().unwrap()))
+            .unwrap()
+            .map(from_imp_client)
+            .unwrap();
+
+        run_named_fifo_try_acquire_tests(&client);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn test_try_acquire_annoymous_pipe_linux_specific_optimization() {
+        let (read, mut write) = os_pipe::pipe().unwrap();
+        write.write_all(b"1").unwrap();
+
+        let client = unsafe {
+            ClientImp::from_pipe(&format!("{},{}", read.as_raw_fd(), write.as_raw_fd()), true)
+        }
+        .unwrap()
+        .map(from_imp_client)
+        .unwrap();
+
+        assert!(!client.supports_try_acquire());
+    }
 }

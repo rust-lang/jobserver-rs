@@ -579,7 +579,7 @@ mod test {
 
     #[cfg(not(target_os = "linux"))]
     #[test]
-    fn test_try_acquire_named_fifo_from_annoymous_pipe_linux() {
+    fn test_try_acquire_annoymous_pipe_linux_specific_optimization() {
         let (read, mut write) = os_pipe::pipe().unwrap();
         write.write_all(b"1").unwrap();
 

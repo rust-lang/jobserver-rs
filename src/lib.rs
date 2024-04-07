@@ -324,6 +324,32 @@ impl Client {
         })
     }
 
+    /// Acquires a token from this jobserver client in a non-blocking way.
+    ///
+    /// # Return value
+    ///
+    /// On successful acquisition of a token an instance of [`Acquired`] is
+    /// returned. This structure, when dropped, will release the token back to
+    /// the jobserver. It's recommended to avoid leaking this value.
+    ///
+    /// # Errors
+    ///
+    /// If an I/O error happens while acquiring a token then this function will
+    /// return immediately with the error. If an error is returned then a token
+    /// was not acquired.
+    ///
+    /// If non-blocking acquire is not supported, the return error will have its `kind()`
+    /// set to [`io::ErrorKind::Unsupported`].
+    pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
+        let ret = self.inner.try_acquire()?;
+
+        Ok(ret.map(|data| Acquired {
+            client: self.inner.clone(),
+            data,
+            disabled: false,
+        }))
+    }
+
     /// Returns amount of tokens in the read-side pipe.
     ///
     /// # Return value
@@ -607,52 +633,76 @@ fn find_jobserver_auth(var: &str) -> Option<&str> {
         .and_then(|s| s.split(' ').next())
 }
 
-#[test]
-fn no_helper_deadlock() {
-    let x = crate::Client::new(32).unwrap();
-    let _y = x.clone();
-    std::mem::drop(x.into_helper_thread(|_| {}).unwrap());
-}
+#[cfg(test)]
+mod test {
+    use super::*;
 
-#[test]
-fn test_find_jobserver_auth() {
-    let cases = [
-        ("", None),
-        ("-j2", None),
-        ("-j2 --jobserver-auth=3,4", Some("3,4")),
-        ("--jobserver-auth=3,4 -j2", Some("3,4")),
-        ("--jobserver-auth=3,4", Some("3,4")),
-        ("--jobserver-auth=fifo:/myfifo", Some("fifo:/myfifo")),
-        ("--jobserver-auth=", Some("")),
-        ("--jobserver-auth", None),
-        ("--jobserver-fds=3,4", Some("3,4")),
-        ("--jobserver-fds=fifo:/myfifo", Some("fifo:/myfifo")),
-        ("--jobserver-fds=", Some("")),
-        ("--jobserver-fds", None),
-        (
-            "--jobserver-auth=auth-a --jobserver-auth=auth-b",
-            Some("auth-b"),
-        ),
-        (
-            "--jobserver-auth=auth-b --jobserver-auth=auth-a",
-            Some("auth-a"),
-        ),
-        ("--jobserver-fds=fds-a --jobserver-fds=fds-b", Some("fds-b")),
-        ("--jobserver-fds=fds-b --jobserver-fds=fds-a", Some("fds-a")),
-        (
-            "--jobserver-auth=auth-a --jobserver-fds=fds-a --jobserver-auth=auth-b",
-            Some("auth-b"),
-        ),
-        (
-            "--jobserver-fds=fds-a --jobserver-auth=auth-a --jobserver-fds=fds-b",
-            Some("auth-a"),
-        ),
-    ];
-    for (var, expected) in cases {
-        let actual = find_jobserver_auth(var);
-        assert_eq!(
-            actual, expected,
-            "expect {expected:?}, got {actual:?}, input `{var:?}`"
-        );
+    pub(super) fn run_named_fifo_try_acquire_tests(client: &Client) {
+        assert!(client.try_acquire().unwrap().is_none());
+        client.release_raw().unwrap();
+
+        let acquired = client.try_acquire().unwrap().unwrap();
+        assert!(client.try_acquire().unwrap().is_none());
+
+        drop(acquired);
+        client.try_acquire().unwrap().unwrap();
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn test_try_acquire() {
+        let client = Client::new(0).unwrap();
+
+        run_named_fifo_try_acquire_tests(&client);
+    }
+
+    #[test]
+    fn no_helper_deadlock() {
+        let x = crate::Client::new(32).unwrap();
+        let _y = x.clone();
+        std::mem::drop(x.into_helper_thread(|_| {}).unwrap());
+    }
+
+    #[test]
+    fn test_find_jobserver_auth() {
+        let cases = [
+            ("", None),
+            ("-j2", None),
+            ("-j2 --jobserver-auth=3,4", Some("3,4")),
+            ("--jobserver-auth=3,4 -j2", Some("3,4")),
+            ("--jobserver-auth=3,4", Some("3,4")),
+            ("--jobserver-auth=fifo:/myfifo", Some("fifo:/myfifo")),
+            ("--jobserver-auth=", Some("")),
+            ("--jobserver-auth", None),
+            ("--jobserver-fds=3,4", Some("3,4")),
+            ("--jobserver-fds=fifo:/myfifo", Some("fifo:/myfifo")),
+            ("--jobserver-fds=", Some("")),
+            ("--jobserver-fds", None),
+            (
+                "--jobserver-auth=auth-a --jobserver-auth=auth-b",
+                Some("auth-b"),
+            ),
+            (
+                "--jobserver-auth=auth-b --jobserver-auth=auth-a",
+                Some("auth-a"),
+            ),
+            ("--jobserver-fds=fds-a --jobserver-fds=fds-b", Some("fds-b")),
+            ("--jobserver-fds=fds-b --jobserver-fds=fds-a", Some("fds-a")),
+            (
+                "--jobserver-auth=auth-a --jobserver-fds=fds-a --jobserver-auth=auth-b",
+                Some("auth-b"),
+            ),
+            (
+                "--jobserver-fds=fds-a --jobserver-auth=auth-a --jobserver-fds=fds-b",
+                Some("auth-a"),
+            ),
+        ];
+        for (var, expected) in cases {
+            let actual = find_jobserver_auth(var);
+            assert_eq!(
+                actual, expected,
+                "expect {expected:?}, got {actual:?}, input `{var:?}`"
+            );
+        }
     }
 }

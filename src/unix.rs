@@ -9,7 +9,10 @@ use std::os::unix::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr;
-use std::sync::{Arc, Once};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Once,
+};
 use std::thread::{self, Builder, JoinHandle};
 use std::time::Duration;
 
@@ -18,7 +21,13 @@ pub enum Client {
     /// `--jobserver-auth=R,W`
     Pipe { read: File, write: File },
     /// `--jobserver-auth=fifo:PATH`
-    Fifo { file: File, path: PathBuf },
+    Fifo {
+        file: File,
+        path: PathBuf,
+        /// it can only go from false -> true but not the other way around, since that
+        ///  could cause a race condition.
+        is_non_blocking: AtomicBool,
+    },
 }
 
 #[derive(Debug)]
@@ -58,8 +67,6 @@ impl Client {
         // with as many kernels/glibc implementations as possible.
         #[cfg(target_os = "linux")]
         {
-            use std::sync::atomic::{AtomicBool, Ordering};
-
             static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
             if PIPE2_AVAILABLE.load(Ordering::SeqCst) {
                 match libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) {
@@ -109,9 +116,11 @@ impl Client {
             .write(true)
             .open(path)
             .map_err(|err| FromEnvErrorInner::CannotOpenPath(path_str.to_string(), err))?;
+
         Ok(Some(Client::Fifo {
             file,
             path: path.into(),
+            is_non_blocking: AtomicBool::new(false),
         }))
     }
 
@@ -155,6 +164,21 @@ impl Client {
             (read_err, write_err) => {
                 read_err?;
                 write_err?;
+
+                // Optimization: Try converting it to a fifo by using /dev/fd
+                //
+                // On linux, opening `/dev/fd/$fd` returns a fd with a new file description,
+                // so we can set `O_NONBLOCK` on it without affecting other processes.
+                //
+                // On macOS, opening `/dev/fd/$fd` seems to be the same as `File::try_clone`.
+                //
+                // I tested this on macOS 14 and Linux 6.5.13
+                #[cfg(target_os = "linux")]
+                if let Ok(Some(jobserver)) =
+                    Self::from_fifo(&format!("fifo:/dev/fd/{}", read.as_raw_fd()))
+                {
+                    return Ok(Some(jobserver));
+                }
             }
         }
 
@@ -230,7 +254,7 @@ impl Client {
                     Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
                     Ok(_) => {
                         return Err(io::Error::new(
-                            io::ErrorKind::Other,
+                            io::ErrorKind::UnexpectedEof,
                             "early EOF on jobserver pipe",
                         ));
                     }
@@ -254,6 +278,65 @@ impl Client {
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
+        let mut buf = [0];
+
+        // On Linux, we can use preadv2 to do non-blocking read,
+        // even if `O_NONBLOCK` is not set.
+        #[cfg(target_os = "linux")]
+        {
+            let read = self.read().as_raw_fd();
+            loop {
+                match non_blocking_read(read, &mut buf) {
+                    Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
+                    Ok(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "early EOF on jobserver pipe",
+                        ))
+                    }
+
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) if e.kind() == io::ErrorKind::Unsupported => break,
+
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+
+        let (mut fifo, is_non_blocking) = match self {
+            Self::Fifo {
+                file,
+                is_non_blocking,
+                ..
+            } => (file, is_non_blocking),
+            _ => return Err(io::ErrorKind::Unsupported.into()),
+        };
+
+        if !is_non_blocking.load(Ordering::Relaxed) {
+            set_nonblocking(fifo.as_raw_fd(), true)?;
+            is_non_blocking.store(true, Ordering::Relaxed);
+        }
+
+        loop {
+            match fifo.read(&mut buf) {
+                Ok(1) => break Ok(Some(Acquired { byte: buf[0] })),
+                Ok(_) => {
+                    break Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "early EOF on jobserver pipe",
+                    ))
+                }
+
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break Ok(None),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+
+                Err(err) => break Err(err),
             }
         }
     }
@@ -492,4 +575,104 @@ extern "C" fn sigusr1_handler(
     _ptr: *mut libc::c_void,
 ) {
     // nothing to do
+}
+
+#[cfg(target_os = "linux")]
+fn cvt_ssize(t: libc::ssize_t) -> io::Result<libc::ssize_t> {
+    if t == -1 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(t)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn non_blocking_read(fd: c_int, buf: &[u8]) -> io::Result<usize> {
+    static IS_NONBLOCKING_READ_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
+
+    if IS_NONBLOCKING_READ_UNSUPPORTED.load(Ordering::Relaxed) {
+        return Err(io::ErrorKind::Unsupported.into());
+    }
+
+    match cvt_ssize(unsafe {
+        libc::preadv2(
+            fd,
+            &libc::iovec {
+                iov_base: buf.as_ptr() as *mut _,
+                iov_len: buf.len(),
+            },
+            1,
+            -1,
+            libc::RWF_NOWAIT,
+        )
+    }) {
+        Ok(cnt) => Ok(cnt.try_into().unwrap()),
+        Err(err) if err.raw_os_error() == Some(libc::EOPNOTSUPP) => {
+            IS_NONBLOCKING_READ_UNSUPPORTED.store(true, Ordering::Relaxed);
+            Err(io::ErrorKind::Unsupported.into())
+        }
+        Err(err) if err.kind() == io::ErrorKind::Unsupported => {
+            IS_NONBLOCKING_READ_UNSUPPORTED.store(true, Ordering::Relaxed);
+            Err(err)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Client as ClientImp;
+
+    use crate::{test::run_named_fifo_try_acquire_tests, Client};
+
+    use std::{
+        fs::File,
+        io::{self, Write},
+        os::unix::io::AsRawFd,
+        sync::Arc,
+    };
+
+    fn from_imp_client(imp: ClientImp) -> Client {
+        Client {
+            inner: Arc::new(imp),
+        }
+    }
+
+    #[test]
+    fn test_try_acquire_named_fifo() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let fifo_path = file.path().to_owned();
+        file.close().unwrap(); // Remove the NamedTempFile to create fifo
+
+        nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::S_IRWXU).unwrap();
+
+        let client = ClientImp::from_fifo(&format!("fifo:{}", fifo_path.to_str().unwrap()))
+            .unwrap()
+            .map(from_imp_client)
+            .unwrap();
+
+        run_named_fifo_try_acquire_tests(&client);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn test_try_acquire_annoymous_pipe_linux_specific_optimization() {
+        let (read, write) = nix::unistd::pipe().unwrap();
+        let read = File::from(read);
+        let mut write = File::from(write);
+
+        write.write_all(b"1").unwrap();
+
+        let client = unsafe {
+            ClientImp::from_pipe(&format!("{},{}", read.as_raw_fd(), write.as_raw_fd()), true)
+        }
+        .unwrap()
+        .map(from_imp_client)
+        .unwrap();
+
+        assert_eq!(
+            client.try_acquire().unwrap_err().kind(),
+            io::ErrorKind::Unsupported
+        );
+    }
 }

@@ -15,9 +15,13 @@ pub struct Client {
 #[derive(Debug)]
 pub struct Acquired;
 
+#[allow(clippy::upper_case_acronyms)]
 type BOOL = i32;
+#[allow(clippy::upper_case_acronyms)]
 type DWORD = u32;
+#[allow(clippy::upper_case_acronyms)]
 type HANDLE = *mut u8;
+#[allow(clippy::upper_case_acronyms)]
 type LONG = i32;
 
 const ERROR_ALREADY_EXISTS: DWORD = 183;
@@ -71,7 +75,7 @@ extern "system" {
 // randomness.
 fn getrandom(dest: &mut [u8]) -> io::Result<()> {
     // Prevent overflow of u32
-    for chunk in dest.chunks_mut(u32::max_value() as usize) {
+    for chunk in dest.chunks_mut(u32::MAX as usize) {
         let ret = unsafe { RtlGenRandom(chunk.as_mut_ptr(), chunk.len() as u32) };
         if ret == 0 {
             return Err(io::Error::new(
@@ -115,10 +119,7 @@ impl Client {
                     continue;
                 }
                 name.pop(); // chop off the trailing nul
-                let client = Client {
-                    sem: handle,
-                    name: name,
-                };
+                let client = Client { sem: handle, name };
                 if create_limit != limit {
                     client.acquire()?;
                 }
@@ -259,7 +260,7 @@ pub(crate) fn spawn_helper(
         state.for_each_request(|_| {
             const WAIT_OBJECT_1: u32 = WAIT_OBJECT_0 + 1;
             match unsafe { WaitForMultipleObjects(2, objects.as_ptr(), FALSE, INFINITE) } {
-                WAIT_OBJECT_0 => return,
+                WAIT_OBJECT_0 => {}
                 WAIT_OBJECT_1 => f(Ok(crate::Acquired {
                     client: client.inner.clone(),
                     data: Acquired,

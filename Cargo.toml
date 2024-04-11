@@ -3,11 +3,11 @@ name = "jobserver"
 version = "0.1.29"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/alexcrichton/jobserver-rs"
-homepage = "https://github.com/alexcrichton/jobserver-rs"
+repository = "https://github.com/rust-lang/jobserver-rs"
+homepage = "https://github.com/rust-lang/jobserver-rs"
 documentation = "https://docs.rs/jobserver"
 description = """
-An implementation of the GNU make jobserver for Rust
+An implementation of the GNU Make jobserver for Rust.
 """
 edition = "2021"
 rust-version = "1.63"

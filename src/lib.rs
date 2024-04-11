@@ -76,7 +76,7 @@
 //! compatible with `make` on Windows. It is, however, compatible with
 //! `mingw32-make`.
 //!
-//! [docs]: http://make.mad-scientist.net/papers/jobserver-implementation/
+//! [docs]: https://make.mad-scientist.net/papers/jobserver-implementation/
 
 #![deny(missing_docs, missing_debug_implementations)]
 #![doc(html_root_url = "https://docs.rs/jobserver/0.1")]

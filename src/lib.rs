@@ -605,10 +605,6 @@ impl HelperState {
         lock.consumer_done = true;
         self.cvar.notify_one();
     }
-
-    fn producer_done(&self) -> bool {
-        self.lock().producer_done
-    }
 }
 
 /// Finds and returns the value of `--jobserver-auth=<VALUE>` in the given

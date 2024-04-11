@@ -291,7 +291,7 @@ impl Client {
         {
             let read = self.read().as_raw_fd();
             loop {
-                match non_blocking_read(read, &mut buf) {
+                match non_blocking_read(read, &buf) {
                     Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
                     Ok(_) => {
                         return Err(io::Error::new(
@@ -437,7 +437,7 @@ pub(crate) fn spawn_helper(
                     }));
                 }
                 Err(e) => break f(Err(e)),
-                Ok(None) if helper.producer_done() => break,
+                Ok(None) if helper.lock().producer_done => break,
                 Ok(None) => {}
             }
         });
@@ -625,12 +625,7 @@ mod test {
 
     use crate::{test::run_named_fifo_try_acquire_tests, Client};
 
-    use std::{
-        fs::File,
-        io::{self, Write},
-        os::unix::io::AsRawFd,
-        sync::Arc,
-    };
+    use std::sync::Arc;
 
     fn from_imp_client(imp: ClientImp) -> Client {
         Client {
@@ -657,6 +652,12 @@ mod test {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn test_try_acquire_annoymous_pipe_linux_specific_optimization() {
+        use std::{
+            fs::File,
+            io::{self, Write},
+            os::unix::io::AsRawFd,
+        };
+
         let (read, write) = nix::unistd::pipe().unwrap();
         let read = File::from(read);
         let mut write = File::from(write);

@@ -15,10 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@master
 
-      - name: Add musl
-        if: ${{ matrix.libc == 'musl' }}
-        run: apt-get install -y musl musl-dev
-
       - name: Install Rust (rustup)
         run: |
           rustup toolchain install ${{ matrix.rust }} --no-self-update --profile minimal
@@ -42,12 +38,14 @@ jobs:
           MAKE: /usr/local/bin/make-4.4.1
 
   test_musl:
+    name: Test (stable, alpine-latest)
     container: rust:alpine
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@master
 
-      - run: apk add musl-dev bash curl make tar
+      - name: Install make dependencies
+        run: apk add musl-dev bash curl make tar
 
       - uses: Swatinem/rust-cache@v2
 

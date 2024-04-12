@@ -291,7 +291,7 @@ impl Client {
         {
             let read = self.read().as_raw_fd();
             loop {
-                match non_blocking_read(read, &buf) {
+                match non_blocking_read(read, &mut buf) {
                     Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
                     Ok(_) => {
                         return Err(io::Error::new(
@@ -587,7 +587,7 @@ fn cvt_ssize(t: libc::ssize_t) -> io::Result<libc::ssize_t> {
 }
 
 #[cfg(target_os = "linux")]
-fn non_blocking_read(fd: c_int, buf: &[u8]) -> io::Result<usize> {
+fn non_blocking_read(fd: c_int, buf: &mut [u8]) -> io::Result<usize> {
     static IS_NONBLOCKING_READ_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
 
     if IS_NONBLOCKING_READ_UNSUPPORTED.load(Ordering::Relaxed) {

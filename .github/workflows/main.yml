@@ -14,7 +14,6 @@ jobs:
         os: [ubuntu-latest, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@master
-
       - name: Install Rust (rustup)
         run: |
           rustup toolchain install ${{ matrix.rust }} --no-self-update --profile minimal

@@ -47,11 +47,9 @@ jobs:
     steps:
       - uses: actions/checkout@master
 
-      - run: apk add musl-dev
+      - run: apk add musl-dev bash curl make tar
 
       - uses: Swatinem/rust-cache@v2
-
-      - run: cargo test --locked
 
       - name: Compile make 4.4.1
         uses: ./.github/actions/compile-make

@@ -45,6 +45,8 @@ jobs:
     container: rust:alpine
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@master
+
       - run: apk add musl-dev
 
       - uses: Swatinem/rust-cache@v2

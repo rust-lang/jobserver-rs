@@ -51,6 +51,17 @@ jobs:
 
       - run: cargo test --locked
 
+      - name: Compile make 4.4.1
+        uses: ./.github/actions/compile-make
+        with:
+          version: 4.4.1
+
+      - name: Test against GNU Make 4.4.1
+        shell: bash
+        run: cargo test --locked
+        env:
+          MAKE: /usr/local/bin/make-4.4.1
+
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest

@@ -36,6 +36,29 @@ jobs:
         env:
           MAKE: /usr/local/bin/make-4.4.1
 
+  test_musl:
+    name: Test (stable, alpine-latest)
+    container: rust:alpine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+
+      - name: Install make dependencies
+        run: apk add musl-dev bash curl make tar
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compile make 4.4.1
+        uses: ./.github/actions/compile-make
+        with:
+          version: 4.4.1
+
+      - name: Test against GNU Make 4.4.1
+        shell: bash
+        run: cargo test --locked
+        env:
+          MAKE: /usr/local/bin/make-4.4.1
+
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest

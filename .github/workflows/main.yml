@@ -36,6 +36,13 @@ jobs:
         env:
           MAKE: /usr/local/bin/make-4.4.1
 
+      - name: Ensure wasm32-unknown-unknown be buildable
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --locked --target wasm32-unknown-unknown
+
   test_musl:
     name: Test (stable, alpine-latest)
     container: rust:alpine

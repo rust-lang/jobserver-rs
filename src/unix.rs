@@ -285,33 +285,6 @@ impl Client {
     pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
         let mut buf = [0];
 
-        // On Linux, we can use preadv2 to do non-blocking read,
-        // even if `O_NONBLOCK` is not set.
-        //
-        // TODO: musl libc supports preadv2 since 1.2.5, but `libc` crate
-        // hasn't yet added it.
-        #[cfg(all(target_os = "linux", target_env = "gnu"))]
-        {
-            let read = self.read().as_raw_fd();
-            loop {
-                match non_blocking_read(read, &mut buf) {
-                    Ok(1) => return Ok(Some(Acquired { byte: buf[0] })),
-                    Ok(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "early EOF on jobserver pipe",
-                        ))
-                    }
-
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(None),
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(e) if e.kind() == io::ErrorKind::Unsupported => break,
-
-                    Err(err) => return Err(err),
-                }
-            }
-        }
-
         let (mut fifo, is_non_blocking) = match self {
             Self::Fifo {
                 file,
@@ -578,50 +551,6 @@ extern "C" fn sigusr1_handler(
     _ptr: *mut libc::c_void,
 ) {
     // nothing to do
-}
-
-// This should be available for all linux targets,
-// though only [`non_blocking_read`] currently uses it so adding gnu cfg.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn cvt_ssize(t: libc::ssize_t) -> io::Result<libc::ssize_t> {
-    if t == -1 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(t)
-    }
-}
-
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn non_blocking_read(fd: c_int, buf: &mut [u8]) -> io::Result<usize> {
-    static IS_NONBLOCKING_READ_UNSUPPORTED: AtomicBool = AtomicBool::new(false);
-
-    if IS_NONBLOCKING_READ_UNSUPPORTED.load(Ordering::Relaxed) {
-        return Err(io::ErrorKind::Unsupported.into());
-    }
-
-    match cvt_ssize(unsafe {
-        libc::preadv2(
-            fd,
-            &libc::iovec {
-                iov_base: buf.as_ptr() as *mut _,
-                iov_len: buf.len(),
-            },
-            1,
-            -1,
-            libc::RWF_NOWAIT,
-        )
-    }) {
-        Ok(cnt) => Ok(cnt.try_into().unwrap()),
-        Err(err) if err.raw_os_error() == Some(libc::EOPNOTSUPP) => {
-            IS_NONBLOCKING_READ_UNSUPPORTED.store(true, Ordering::Relaxed);
-            Err(io::ErrorKind::Unsupported.into())
-        }
-        Err(err) if err.kind() == io::ErrorKind::Unsupported => {
-            IS_NONBLOCKING_READ_UNSUPPORTED.store(true, Ordering::Relaxed);
-            Err(err)
-        }
-        Err(err) => Err(err),
-    }
 }
 
 #[cfg(test)]

@@ -403,6 +403,8 @@ mod linux {
 
     use libc::{iovec, off_t, ssize_t, syscall, SYS_preadv2};
 
+    const RWF_NOWAIT: c_int = 0x00000008;
+
     fn cvt_ssize(t: ssize_t) -> io::Result<ssize_t> {
         if t == -1 {
             Err(io::Error::last_os_error())
@@ -454,7 +456,7 @@ mod linux {
                 },
                 1,
                 -1,
-                libc::RWF_NOWAIT,
+                RWF_NOWAIT,
             )
         }) {
             Ok(cnt) => Ok(cnt.try_into().unwrap()),

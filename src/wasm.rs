@@ -94,7 +94,7 @@ pub(crate) fn spawn_helper(
         state.for_each_request(|_| f(client.acquire()));
     })?;
 
-    Ok(Helper { thread: thread })
+    Ok(Helper { thread })
 }
 
 impl Helper {

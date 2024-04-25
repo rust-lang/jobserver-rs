@@ -450,13 +450,9 @@ mod linux {
             )
         }) {
             Ok(cnt) => Ok(cnt.try_into().unwrap()),
-            Err(err) if err.raw_os_error() == Some(libc::EOPNOTSUPP) => {
+            Err(err) if matches!(err.raw_os_error(), Some(libc::EOPNOTSUPP | libc::ENOSYS)) => {
                 IS_NONBLOCKING_READ_UNSUPPORTED.store(true, Ordering::Relaxed);
                 Err(io::ErrorKind::Unsupported.into())
-            }
-            Err(err) if err.kind() == io::ErrorKind::Unsupported => {
-                IS_NONBLOCKING_READ_UNSUPPORTED.store(true, Ordering::Relaxed);
-                Err(err)
             }
             Err(err) => Err(err),
         }

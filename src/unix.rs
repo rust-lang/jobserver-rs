@@ -396,7 +396,7 @@ impl Client {
 mod linux {
     use super::*;
 
-    use libc::{iovec, off_t, ssize_t, syscall, SYS_preadv2};
+    use libc::{iovec, ssize_t, syscall, SYS_preadv2};
 
     const RWF_NOWAIT: c_int = 0x00000008;
 
@@ -408,18 +408,12 @@ mod linux {
         }
     }
 
-    unsafe fn preadv2(
-        fd: c_int,
-        iov: *const iovec,
-        iovcnt: c_int,
-        offset: off_t,
-        flags: c_int,
-    ) -> ssize_t {
+    unsafe fn preadv2(fd: c_int, iov: *const iovec, iovcnt: c_int, flags: c_int) -> ssize_t {
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
-        let res = syscall(SYS_preadv2, fd, iov, iovcnt, offset, 0, flags);
+        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, 0, flags);
 
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
-        let res = syscall(SYS_preadv2, fd, iov, iovcnt, offset, flags);
+        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, flags);
 
         #[cfg(not(target_arch = "x86_64"))]
         let res = syscall(
@@ -427,8 +421,8 @@ mod linux {
             fd,
             iov,
             iovcnt,
-            offset as libc::c_long,
-            ((offset as u64) >> 32) as libc::c_long,
+            -1 as libc::c_long,
+            ((-1 as u64) >> 32) as libc::c_long,
             flags,
         );
 
@@ -450,7 +444,6 @@ mod linux {
                     iov_len: buf.len(),
                 },
                 1,
-                -1,
                 RWF_NOWAIT,
             )
         }) {

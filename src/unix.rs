@@ -419,7 +419,7 @@ mod linux {
         let res = syscall(SYS_preadv2, fd, iov, iovcnt, offset, 0, flags);
 
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
-        let res = syscall(SYS_preadv2, fd, iov, iovcnt, offset, 0, flags);
+        let res = syscall(SYS_preadv2, fd, iov, iovcnt, offset, flags);
 
         #[cfg(not(target_arch = "x86_64"))]
         let res = syscall(

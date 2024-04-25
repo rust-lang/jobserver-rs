@@ -287,9 +287,6 @@ impl Client {
 
         // On Linux, we can use preadv2 to do non-blocking read,
         // even if `O_NONBLOCK` is not set.
-        //
-        // TODO: musl libc supports preadv2 since 1.2.5, but `libc` crate
-        // hasn't yet added it.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let read = self.read().as_raw_fd();
@@ -395,8 +392,6 @@ impl Client {
     }
 }
 
-// This should be available for all linux targets,
-// though only [`non_blocking_read`] currently uses it so adding gnu cfg.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
     use super::*;

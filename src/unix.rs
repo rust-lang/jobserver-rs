@@ -396,7 +396,7 @@ impl Client {
 mod linux {
     use super::*;
 
-    use libc::{iovec, ssize_t, syscall, SYS_preadv2};
+    use libc::{iovec, off_t, ssize_t, syscall, SYS_preadv2};
 
     // TODO: Replace this with libc::RWF_NOWAIT once they have it for musl
     //  targets
@@ -414,10 +414,18 @@ mod linux {
         let iovcnt: c_int = 1;
 
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
-        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, 0, RWF_NOWAIT);
+        let res = syscall(
+            SYS_preadv2,
+            fd,
+            iov,
+            iovcnt,
+            -1 as off_t,
+            0 as off_t,
+            RWF_NOWAIT,
+        );
 
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
-        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, RWF_NOWAIT);
+        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1 as off_t, RWF_NOWAIT);
 
         #[cfg(not(target_arch = "x86_64"))]
         let res = syscall(

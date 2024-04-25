@@ -398,6 +398,8 @@ mod linux {
 
     use libc::{iovec, ssize_t, syscall, SYS_preadv2};
 
+    // TODO: Replace this with libc::RWF_NOWAIT once they have it for musl
+    //  targets
     const RWF_NOWAIT: c_int = 0x00000008;
 
     fn cvt_ssize(t: ssize_t) -> io::Result<ssize_t> {
@@ -408,12 +410,14 @@ mod linux {
         }
     }
 
-    unsafe fn preadv2(fd: c_int, iov: *const iovec, iovcnt: c_int, flags: c_int) -> ssize_t {
+    unsafe fn preadv2(fd: c_int, iov: &iovec) -> ssize_t {
+        let iovcnt: c_int = 1;
+
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
-        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, 0, flags);
+        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, 0, RWF_NOWAIT);
 
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
-        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, flags);
+        let res = syscall(SYS_preadv2, fd, iov, iovcnt, -1, RWF_NOWAIT);
 
         #[cfg(not(target_arch = "x86_64"))]
         let res = syscall(
@@ -423,7 +427,7 @@ mod linux {
             iovcnt,
             -1 as libc::c_long,
             ((-1 as u64) >> 32) as libc::c_long,
-            flags,
+            RWF_NOWAIT,
         );
 
         res.try_into().unwrap()
@@ -443,8 +447,6 @@ mod linux {
                     iov_base: buf.as_ptr() as *mut _,
                     iov_len: buf.len(),
                 },
-                1,
-                RWF_NOWAIT,
             )
         }) {
             Ok(cnt) => Ok(cnt.try_into().unwrap()),

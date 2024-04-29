@@ -412,22 +412,13 @@ mod linux {
 
     fn preadv2(fd: c_int, iov: &iovec) -> ssize_t {
         let iovcnt: c_int = 1;
+        let offset: off_t = -1;
 
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
-        let res = unsafe {
-            syscall(
-                SYS_preadv2,
-                fd,
-                iov,
-                iovcnt,
-                -1 as off_t,
-                0 as off_t,
-                RWF_NOWAIT,
-            )
-        };
+        let res = unsafe { syscall(SYS_preadv2, fd, iov, iovcnt, offset, 0 as off_t, RWF_NOWAIT) };
 
         #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
-        let res = unsafe { syscall(SYS_preadv2, fd, iov, iovcnt, -1 as off_t, RWF_NOWAIT) };
+        let res = unsafe { syscall(SYS_preadv2, fd, iov, iovcnt, offset, RWF_NOWAIT) };
 
         #[cfg(not(target_arch = "x86_64"))]
         let res = unsafe {
@@ -436,8 +427,8 @@ mod linux {
                 fd,
                 iov,
                 iovcnt,
-                -1 as libc::c_long,
-                ((-1 as u64) >> 32) as libc::c_long,
+                offset as libc::c_long,
+                ((offset as u64) >> 32) as libc::c_long,
                 RWF_NOWAIT,
             )
         };

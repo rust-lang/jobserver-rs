@@ -414,26 +414,25 @@ mod linux {
         let iovcnt: c_int = 1;
         let offset: off_t = -1;
 
-        #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
-        let res = unsafe { syscall(SYS_preadv2, fd, iov, iovcnt, offset, 0 as off_t, RWF_NOWAIT) };
-
-        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
-        let res = unsafe { syscall(SYS_preadv2, fd, iov, iovcnt, offset, RWF_NOWAIT) };
-
-        #[cfg(not(target_arch = "x86_64"))]
-        let res = unsafe {
-            syscall(
-                SYS_preadv2,
-                fd,
-                iov,
-                iovcnt,
-                offset as libc::c_long,
-                ((offset as u64) >> 32) as libc::c_long,
-                RWF_NOWAIT,
-            )
-        };
-
-        res.try_into().unwrap()
+        if cfg!(all(target_arch = "x86_64", target_pointer_width = "64")) {
+            unsafe { syscall(SYS_preadv2, fd, iov, iovcnt, offset, 0 as off_t, RWF_NOWAIT) }
+        } else if cfg!(all(target_arch = "x86_64", target_pointer_width = "32")) {
+            unsafe { syscall(SYS_preadv2, fd, iov, iovcnt, offset, RWF_NOWAIT) }
+        } else {
+            unsafe {
+                syscall(
+                    SYS_preadv2,
+                    fd,
+                    iov,
+                    iovcnt,
+                    offset as libc::c_long,
+                    ((offset as u64) >> 32) as libc::c_long,
+                    RWF_NOWAIT,
+                )
+            }
+        }
+        .try_into()
+        .unwrap()
     }
 
     pub fn non_blocking_read(fd: c_int, buf: &mut [u8]) -> io::Result<usize> {

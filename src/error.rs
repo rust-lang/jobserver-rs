@@ -59,12 +59,12 @@ impl std::fmt::Display for FromEnvError {
         match &self.inner {
             FromEnvErrorInner::NoEnvVar => write!(f, "there is no environment variable that describes jobserver to inherit"),
             FromEnvErrorInner::NoJobserver => write!(f, "there is no `--jobserver-fds=` or `--jobserver-auth=` in the environment variable"),
-            FromEnvErrorInner::CannotParse(s) => write!(f, "cannot parse jobserver environment variable value: {s}"),
-            FromEnvErrorInner::CannotOpenPath(s, err) => write!(f, "cannot open path or name {s} from the jobserver environment variable value: {err}"),
-            FromEnvErrorInner::CannotOpenFd(fd, err) => write!(f, "cannot open file descriptor {fd} from the jobserver environment variable value: {err}"),
-            FromEnvErrorInner::NegativeFd(fd) => write!(f, "file descriptor {fd} from the jobserver environment variable value is negative"),
-            FromEnvErrorInner::NotAPipe(fd, None) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a pipe"),
-            FromEnvErrorInner::NotAPipe(fd, Some(err)) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a pipe: {err}"),
+            FromEnvErrorInner::CannotParse(s) => write!(f, "cannot parse jobserver environment variable value: {}", s),
+            FromEnvErrorInner::CannotOpenPath(s, err) => write!(f, "cannot open path or name {} from the jobserver environment variable value: {}", s, err),
+            FromEnvErrorInner::CannotOpenFd(fd, err) => write!(f, "cannot open file descriptor {} from the jobserver environment variable value: {}", fd, err),
+            FromEnvErrorInner::NegativeFd(fd) => write!(f, "file descriptor {} from the jobserver environment variable value is negative", fd),
+            FromEnvErrorInner::NotAPipe(fd, None) => write!(f, "file descriptor {} from the jobserver environment variable value is not a pipe", fd),
+            FromEnvErrorInner::NotAPipe(fd, Some(err)) => write!(f, "file descriptor {} from the jobserver environment variable value is not a pipe: {}", fd, err),
             FromEnvErrorInner::Unsupported => write!(f, "jobserver inheritance is not supported on this platform"),
         }
     }

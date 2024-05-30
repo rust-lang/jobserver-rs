@@ -107,4 +107,4 @@ jobs:
       - uses: taiki-e/install-action@cargo-hack
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo hack check --lib --rust-version --ignore-private --locked
+      - run: cargo hack check --lib --rust-version --ignore-private --remove-dev-deps

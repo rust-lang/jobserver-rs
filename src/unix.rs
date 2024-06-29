@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::mem;
 use std::mem::MaybeUninit;
 use std::os::unix::prelude::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::ptr;
 use std::sync::{
@@ -17,17 +17,15 @@ use std::thread::{self, Builder, JoinHandle};
 use std::time::Duration;
 
 #[derive(Debug)]
-pub enum Client {
-    /// `--jobserver-auth=R,W`
-    Pipe { read: File, write: File },
-    /// `--jobserver-auth=fifo:PATH`
-    Fifo {
-        file: File,
-        path: PathBuf,
-        /// it can only go from false -> true but not the other way around, since that
-        ///  could cause a race condition.
-        is_non_blocking: AtomicBool,
-    },
+pub struct Client {
+    read: File,
+    write: Option<File>,
+    /// If path is not None, then a fifo jobserver is created.
+    path: Option<Box<Path>>,
+    supports_non_blocking: bool,
+    /// it can only go from false -> true but not the other way around, since that
+    ///  could cause a race condition.
+    is_non_blocking: AtomicBool,
 }
 
 #[derive(Debug)]
@@ -117,9 +115,11 @@ impl Client {
             .open(path)
             .map_err(|err| FromEnvErrorInner::CannotOpenPath(path_str.to_string(), err))?;
 
-        Ok(Some(Client::Fifo {
-            file,
-            path: path.into(),
+        Ok(Some(Client {
+            read: file,
+            write: None,
+            path: Some(path.into()),
+            supports_non_blocking: true,
             is_non_blocking: AtomicBool::new(false),
         }))
     }
@@ -174,41 +174,42 @@ impl Client {
                 //
                 // I tested this on macOS 14 and Linux 6.5.13
                 #[cfg(target_os = "linux")]
-                if let Ok(Some(jobserver)) =
+                if let Ok(Some(mut jobserver)) =
                     Self::from_fifo(&format!("fifo:/dev/fd/{}", read.as_raw_fd()))
                 {
+                    jobserver.path.take();
                     return Ok(Some(jobserver));
                 }
             }
         }
 
-        Ok(Some(Client::Pipe {
+        Ok(Some(Client {
             read: clone_fd_and_set_cloexec(read)?,
-            write: clone_fd_and_set_cloexec(write)?,
+            write: Some(clone_fd_and_set_cloexec(write)?),
+            path: None,
+            supports_non_blocking: false,
+            is_non_blocking: AtomicBool::new(false),
         }))
     }
 
     unsafe fn from_fds(read: c_int, write: c_int) -> Client {
-        Client::Pipe {
+        Client {
             read: File::from_raw_fd(read),
-            write: File::from_raw_fd(write),
+            write: Some(File::from_raw_fd(write)),
+            path: None,
+            supports_non_blocking: false,
+            is_non_blocking: AtomicBool::new(false),
         }
     }
 
     /// Gets the read end of our jobserver client.
     fn read(&self) -> &File {
-        match self {
-            Client::Pipe { read, .. } => read,
-            Client::Fifo { file, .. } => file,
-        }
+        &self.read
     }
 
     /// Gets the write end of our jobserver client.
     fn write(&self) -> &File {
-        match self {
-            Client::Pipe { write, .. } => write,
-            Client::Fifo { file, .. } => file,
-        }
+        self.write.as_ref().unwrap_or(&self.read)
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {
@@ -285,18 +286,15 @@ impl Client {
     pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
         let mut buf = [0];
 
-        let (mut fifo, is_non_blocking) = match self {
-            Self::Fifo {
-                file,
-                is_non_blocking,
-                ..
-            } => (file, is_non_blocking),
-            _ => return Err(io::ErrorKind::Unsupported.into()),
-        };
+        if !self.supports_non_blocking {
+            return Err(io::ErrorKind::Unsupported.into());
+        }
 
-        if !is_non_blocking.load(Ordering::Relaxed) {
+        let mut fifo = self.read();
+
+        if !self.is_non_blocking.load(Ordering::Relaxed) {
             set_nonblocking(fifo.as_raw_fd(), true)?;
-            is_non_blocking.store(true, Ordering::Relaxed);
+            self.is_non_blocking.store(true, Ordering::Relaxed);
         }
 
         loop {
@@ -333,10 +331,10 @@ impl Client {
     }
 
     pub fn string_arg(&self) -> String {
-        match self {
-            Client::Pipe { read, write } => format!("{},{}", read.as_raw_fd(), write.as_raw_fd()),
-            Client::Fifo { path, .. } => format!("fifo:{}", path.to_str().unwrap()),
-        }
+        self.path
+            .as_deref()
+            .map(|path| format!("fifo:{}", path.display()))
+            .unwrap_or_else(|| format!("{},{}", self.read().as_raw_fd(), self.write().as_raw_fd()))
     }
 
     pub fn available(&self) -> io::Result<usize> {
@@ -346,12 +344,11 @@ impl Client {
     }
 
     pub fn configure(&self, cmd: &mut Command) {
-        match self {
+        if self.path.is_some() {
             // We `File::open`ed it when inheriting from environment,
             // so no need to set cloexec for fifo.
-            Client::Fifo { .. } => return,
-            Client::Pipe { .. } => {}
-        };
+            return;
+        }
         // Here we basically just want to say that in the child process
         // we'll configure the read/write file descriptors to *not* be
         // cloexec, so they're inherited across the exec and specified as

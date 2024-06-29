@@ -36,6 +36,8 @@ pub enum FromEnvErrorKind {
     NotAPipe,
     /// Jobserver inheritance is not supported on this platform.
     Unsupported,
+    /// Cannot clone the jobserver fifo fd
+    CannotClone,
 }
 
 impl FromEnvError {
@@ -50,6 +52,7 @@ impl FromEnvError {
             FromEnvErrorInner::NegativeFd(..) => FromEnvErrorKind::NegativeFd,
             FromEnvErrorInner::NotAPipe(..) => FromEnvErrorKind::NotAPipe,
             FromEnvErrorInner::Unsupported => FromEnvErrorKind::Unsupported,
+            FromEnvErrorInner::CannotClone(..) => FromEnvErrorKind::CannotClone,
         }
     }
 }
@@ -66,6 +69,7 @@ impl std::fmt::Display for FromEnvError {
             FromEnvErrorInner::NotAPipe(fd, None) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a pipe"),
             FromEnvErrorInner::NotAPipe(fd, Some(err)) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a pipe: {err}"),
             FromEnvErrorInner::Unsupported => write!(f, "jobserver inheritance is not supported on this platform"),
+            FromEnvErrorInner::CannotClone(fd, err) => write!(f, "file descriptor {fd} created fromjobserver environment variable value cannot be cloned: {err}"),
         }
     }
 }
@@ -73,9 +77,9 @@ impl std::error::Error for FromEnvError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.inner {
             FromEnvErrorInner::CannotOpenPath(_, err) => Some(err),
-            FromEnvErrorInner::NotAPipe(_, Some(err)) | FromEnvErrorInner::CannotOpenFd(_, err) => {
-                Some(err)
-            }
+            FromEnvErrorInner::NotAPipe(_, Some(err))
+            | FromEnvErrorInner::CannotOpenFd(_, err)
+            | FromEnvErrorInner::CannotClone(_, err) => Some(err),
             _ => None,
         }
     }
@@ -92,4 +96,5 @@ pub(crate) enum FromEnvErrorInner {
     NegativeFd(RawFd),
     NotAPipe(RawFd, Option<std::io::Error>),
     Unsupported,
+    CannotClone(RawFd, std::io::Error),
 }

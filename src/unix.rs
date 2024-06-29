@@ -17,15 +17,19 @@ use std::thread::{self, Builder, JoinHandle};
 use std::time::Duration;
 
 #[derive(Debug)]
+enum ClientCreationArg {
+    Fds { read: c_int, write: c_int },
+    Fifo(Box<Path>),
+}
+
+#[derive(Debug)]
 pub struct Client {
     read: File,
-    write: Option<File>,
-    /// If path is not None, then a fifo jobserver is created.
-    path: Option<Box<Path>>,
-    supports_non_blocking: bool,
-    /// it can only go from false -> true but not the other way around, since that
+    write: File,
+    creation_arg: ClientCreationArg,
+    /// it can only go from Some(false) -> Some(true) but not the other way around, since that
     ///  could cause a race condition.
-    is_non_blocking: AtomicBool,
+    is_non_blocking: Option<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -41,7 +45,7 @@ impl Client {
         // wrong!
         const BUFFER: [u8; 128] = [b'|'; 128];
 
-        let mut write = client.write();
+        let mut write = &client.write;
 
         set_nonblocking(write.as_raw_fd(), true)?;
 
@@ -109,6 +113,7 @@ impl Client {
             FromEnvErrorInner::CannotParse("expected a path after `fifo:`".to_string())
         })?;
         let path = Path::new(path_str);
+
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -116,11 +121,12 @@ impl Client {
             .map_err(|err| FromEnvErrorInner::CannotOpenPath(path_str.to_string(), err))?;
 
         Ok(Some(Client {
-            read: file,
-            write: None,
-            path: Some(path.into()),
-            supports_non_blocking: true,
-            is_non_blocking: AtomicBool::new(false),
+            read: file
+                .try_clone()
+                .map_err(|err| FromEnvErrorInner::CannotClone(file.as_raw_fd(), err))?,
+            write: file,
+            creation_arg: ClientCreationArg::Fifo(path.into()),
+            is_non_blocking: Some(AtomicBool::new(false)),
         }))
     }
 
@@ -148,6 +154,8 @@ impl Client {
             return Err(FromEnvErrorInner::NegativeFd(write));
         }
 
+        let creation_arg = ClientCreationArg::Fds { read, write };
+
         // Ok so we've got two integers that look like file descriptors, but
         // for extra sanity checking let's see if they actually look like
         // valid files and instances of a pipe if feature enabled before we
@@ -174,42 +182,37 @@ impl Client {
                 //
                 // I tested this on macOS 14 and Linux 6.5.13
                 #[cfg(target_os = "linux")]
-                if let Ok(Some(mut jobserver)) =
-                    Self::from_fifo(&format!("fifo:/dev/fd/{}", read.as_raw_fd()))
-                {
-                    jobserver.path.take();
-                    return Ok(Some(jobserver));
+                if let (Ok(read), Ok(write)) = (
+                    File::open(format!("/dev/fd/{}", read)),
+                    OpenOptions::new()
+                        .write(true)
+                        .open(format!("/dev/fd/{}", write)),
+                ) {
+                    return Ok(Some(Client {
+                        read,
+                        write,
+                        creation_arg,
+                        is_non_blocking: Some(AtomicBool::new(false)),
+                    }));
                 }
             }
         }
 
         Ok(Some(Client {
             read: clone_fd_and_set_cloexec(read)?,
-            write: Some(clone_fd_and_set_cloexec(write)?),
-            path: None,
-            supports_non_blocking: false,
-            is_non_blocking: AtomicBool::new(false),
+            write: clone_fd_and_set_cloexec(write)?,
+            creation_arg,
+            is_non_blocking: None,
         }))
     }
 
     unsafe fn from_fds(read: c_int, write: c_int) -> Client {
         Client {
             read: File::from_raw_fd(read),
-            write: Some(File::from_raw_fd(write)),
-            path: None,
-            supports_non_blocking: false,
-            is_non_blocking: AtomicBool::new(false),
+            write: File::from_raw_fd(write),
+            creation_arg: ClientCreationArg::Fds { read, write },
+            is_non_blocking: None,
         }
-    }
-
-    /// Gets the read end of our jobserver client.
-    fn read(&self) -> &File {
-        &self.read
-    }
-
-    /// Gets the write end of our jobserver client.
-    fn write(&self) -> &File {
-        self.write.as_ref().unwrap_or(&self.read)
     }
 
     pub fn acquire(&self) -> io::Result<Acquired> {
@@ -246,7 +249,7 @@ impl Client {
         // to shut us down, so we otherwise punt all errors upwards.
         unsafe {
             let mut fd: libc::pollfd = mem::zeroed();
-            let mut read = self.read();
+            let mut read = &self.read;
             fd.fd = read.as_raw_fd();
             fd.events = libc::POLLIN;
             loop {
@@ -285,16 +288,15 @@ impl Client {
 
     pub fn try_acquire(&self) -> io::Result<Option<Acquired>> {
         let mut buf = [0];
+        let mut fifo = &self.read;
 
-        if !self.supports_non_blocking {
+        if let Some(is_non_blocking) = self.is_non_blocking.as_ref() {
+            if !is_non_blocking.load(Ordering::Relaxed) {
+                set_nonblocking(fifo.as_raw_fd(), true)?;
+                is_non_blocking.store(true, Ordering::Relaxed);
+            }
+        } else {
             return Err(io::ErrorKind::Unsupported.into());
-        }
-
-        let mut fifo = self.read();
-
-        if !self.is_non_blocking.load(Ordering::Relaxed) {
-            set_nonblocking(fifo.as_raw_fd(), true)?;
-            self.is_non_blocking.store(true, Ordering::Relaxed);
         }
 
         loop {
@@ -321,7 +323,7 @@ impl Client {
         // always quickly release a token). If that turns out to not be the
         // case we'll get an error anyway!
         let byte = data.map(|d| d.byte).unwrap_or(b'+');
-        match self.write().write(&[byte])? {
+        match (&self.write).write(&[byte])? {
             1 => Ok(()),
             _ => Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -331,20 +333,20 @@ impl Client {
     }
 
     pub fn string_arg(&self) -> String {
-        self.path
-            .as_deref()
-            .map(|path| format!("fifo:{}", path.display()))
-            .unwrap_or_else(|| format!("{},{}", self.read().as_raw_fd(), self.write().as_raw_fd()))
+        match &self.creation_arg {
+            ClientCreationArg::Fifo(path) => format!("fifo:{}", path.display()),
+            ClientCreationArg::Fds { read, write } => format!("{},{}", read, write),
+        }
     }
 
     pub fn available(&self) -> io::Result<usize> {
         let mut len = MaybeUninit::<c_int>::uninit();
-        cvt(unsafe { libc::ioctl(self.read().as_raw_fd(), libc::FIONREAD, len.as_mut_ptr()) })?;
+        cvt(unsafe { libc::ioctl(self.read.as_raw_fd(), libc::FIONREAD, len.as_mut_ptr()) })?;
         Ok(unsafe { len.assume_init() } as usize)
     }
 
     pub fn configure(&self, cmd: &mut Command) {
-        if self.path.is_some() {
+        if matches!(self.creation_arg, ClientCreationArg::Fifo { .. }) {
             // We `File::open`ed it when inheriting from environment,
             // so no need to set cloexec for fifo.
             return;
@@ -353,8 +355,8 @@ impl Client {
         // we'll configure the read/write file descriptors to *not* be
         // cloexec, so they're inherited across the exec and specified as
         // integers through `string_arg` above.
-        let read = self.read().as_raw_fd();
-        let write = self.write().as_raw_fd();
+        let read = self.read.as_raw_fd();
+        let write = self.write.as_raw_fd();
         unsafe {
             cmd.pre_exec(move || {
                 set_cloexec(read, false)?;

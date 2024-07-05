@@ -644,7 +644,7 @@ mod test {
         client.try_acquire().unwrap().unwrap();
     }
 
-    #[cfg(any(not(unix), linux))]
+    #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn test_try_acquire() {
         let client = Client::new(0).unwrap();

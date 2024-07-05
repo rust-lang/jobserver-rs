@@ -114,17 +114,17 @@ impl Client {
         })?;
         let path = Path::new(path_str);
 
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|err| FromEnvErrorInner::CannotOpenPath(path_str.to_string(), err))?;
+        let open_file = || {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path)
+                .map_err(|err| FromEnvErrorInner::CannotOpenPath(path_str.to_string(), err))
+        };
 
         Ok(Some(Client {
-            read: file
-                .try_clone()
-                .map_err(|err| FromEnvErrorInner::CannotClone(file.as_raw_fd(), err))?,
-            write: file,
+            read: open_file()?,
+            write: open_file()?,
             creation_arg: ClientCreationArg::Fifo(path.into()),
             is_non_blocking: Some(AtomicBool::new(false)),
         }))

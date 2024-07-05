@@ -558,7 +558,12 @@ mod test {
 
     use crate::{test::run_named_fifo_try_acquire_tests, Client};
 
-    use std::sync::Arc;
+    use std::{
+        fs::File,
+        io::{self, Write},
+        os::unix::io::AsRawFd,
+        sync::Arc,
+    };
 
     fn from_imp_client(imp: ClientImp) -> Client {
         Client {
@@ -566,47 +571,69 @@ mod test {
         }
     }
 
-    #[test]
-    fn test_try_acquire_named_fifo() {
+    fn new_client_from_fifo() -> (Client, String) {
         let file = tempfile::NamedTempFile::new().unwrap();
         let fifo_path = file.path().to_owned();
         file.close().unwrap(); // Remove the NamedTempFile to create fifo
 
         nix::unistd::mkfifo(&fifo_path, nix::sys::stat::Mode::S_IRWXU).unwrap();
 
-        let client = ClientImp::from_fifo(&format!("fifo:{}", fifo_path.to_str().unwrap()))
-            .unwrap()
-            .map(from_imp_client)
-            .unwrap();
+        let arg = format!("fifo:{}", fifo_path.to_str().unwrap());
 
-        run_named_fifo_try_acquire_tests(&client);
+        (
+            ClientImp::from_fifo(&arg)
+                .unwrap()
+                .map(from_imp_client)
+                .unwrap(),
+            arg,
+        )
     }
 
-    #[cfg(not(target_os = "linux"))]
-    #[test]
-    fn test_try_acquire_annoymous_pipe_linux_specific_optimization() {
-        use std::{
-            fs::File,
-            io::{self, Write},
-            os::unix::io::AsRawFd,
-        };
-
+    fn new_client_from_pipe() -> (Client, String) {
         let (read, write) = nix::unistd::pipe().unwrap();
         let read = File::from(read);
         let mut write = File::from(write);
 
         write.write_all(b"1").unwrap();
 
-        let client = unsafe {
-            ClientImp::from_pipe(&format!("{},{}", read.as_raw_fd(), write.as_raw_fd()), true)
-        }
-        .unwrap()
-        .map(from_imp_client)
-        .unwrap();
+        let arg = format!("{},{}", read.as_raw_fd(), write.as_raw_fd());
 
+        (
+            unsafe { ClientImp::from_pipe(&arg, true) }
+                .unwrap()
+                .map(from_imp_client)
+                .unwrap(),
+            arg,
+        )
+    }
+
+    #[test]
+    fn test_try_acquire_named_fifo() {
+        run_named_fifo_try_acquire_tests(&new_client_from_fifo().0);
+    }
+
+    #[test]
+    fn test_try_acquire_annoymous_pipe_linux_specific_optimization() {
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(
-            client.try_acquire().unwrap_err().kind(),
+            new_client_from_pipe().0.try_acquire().unwrap_err().kind(),
             io::ErrorKind::Unsupported
         );
+
+        #[cfg(target_os = "linux")]
+        {
+            let client = new_client_from_pipe().0;
+            client.acquire().unwrap().drop_without_releasing();
+            run_named_fifo_try_acquire_tests(&client);
+        }
+    }
+
+    #[test]
+    fn test_string_arg() {
+        let (client, arg) = new_client_from_fifo();
+        assert_eq!(client.inner.string_arg(), arg);
+
+        let (client, arg) = new_client_from_pipe();
+        assert_eq!(client.inner.string_arg(), arg);
     }
 }

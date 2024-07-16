@@ -17,6 +17,10 @@ use std::thread::{self, Builder, JoinHandle};
 use std::time::Duration;
 
 #[derive(Debug)]
+/// This preserves the `--jobserver-auth` type at creation time,
+/// so auth type will be passed down to and inherit from sub-Make processes correctly.
+///
+/// See <https://github.com/rust-lang/jobserver-rs/issues/99> for details.
 enum ClientCreationArg {
     Fds { read: c_int, write: c_int },
     Fifo(Box<Path>),
@@ -27,8 +31,12 @@ pub struct Client {
     read: File,
     write: File,
     creation_arg: ClientCreationArg,
-    /// it can only go from Some(false) -> Some(true) but not the other way around, since that
-    ///  could cause a race condition.
+    /// It is set to `None` if the pipe is shared with other processes, so it
+    /// cannot support non-blocking mode.
+    ///
+    /// If it is set to `Some`, then it can only go from
+    /// `Some(false)` -> `Some(true)` but not the other way around,
+    /// since that could cause a race condition.
     is_non_blocking: Option<AtomicBool>,
 }
 
@@ -115,6 +123,10 @@ impl Client {
         let path = Path::new(path_str);
 
         let open_file = || {
+            // Opening with read write is necessary, since opening with
+            // read-only or write-only could block the thread until another
+            // thread opens it with write-only or read-only (or RDWR)
+            // correspondingly.
             OpenOptions::new()
                 .read(true)
                 .write(true)

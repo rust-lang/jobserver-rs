@@ -214,7 +214,7 @@ impl Client {
         }
     }
 
-    pub fn configure(&self, _cmd: &mut Command) {
+    pub fn configure(self: &Arc<Self>, _cmd: &mut Command) {
         // nothing to do here, we gave the name of our semaphore to the
         // child above
     }

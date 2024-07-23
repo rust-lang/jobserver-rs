@@ -43,3 +43,8 @@ harness = false
 [[test]]
 name = "helper"
 path = "tests/helper.rs"
+
+[[test]]
+name = "spawn-after-drop"
+path = "tests/spawn-after-drop.rs"
+harness = false

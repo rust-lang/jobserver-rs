@@ -47,7 +47,7 @@ pub struct Acquired {
 
 impl Client {
     pub fn new(mut limit: usize) -> io::Result<Client> {
-        let client = unsafe { Client::mk()? };
+        let client = Client::mk()?;
 
         // I don't think the character written here matters, but I could be
         // wrong!
@@ -55,7 +55,7 @@ impl Client {
 
         let mut write = &client.write;
 
-        set_nonblocking(write.as_raw_fd(), true)?;
+        set_nonblocking(write.as_fd(), true)?;
 
         while limit > 0 {
             let n = limit.min(BUFFER.len());
@@ -64,39 +64,51 @@ impl Client {
             limit -= n;
         }
 
-        set_nonblocking(write.as_raw_fd(), false)?;
+        set_nonblocking(write.as_fd(), false)?;
 
         Ok(client)
     }
 
-    unsafe fn mk() -> io::Result<Client> {
-        let mut pipes = [0; 2];
-
+    fn mk() -> io::Result<Client> {
         // Attempt atomically-create-with-cloexec if we can on Linux,
         // detected by using the `syscall` function in `libc` to try to work
         // with as many kernels/glibc implementations as possible.
         #[cfg(target_os = "linux")]
         {
             static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
-            if PIPE2_AVAILABLE.load(Ordering::SeqCst) {
-                match libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) {
+            if PIPE2_AVAILABLE.load(Ordering::Relaxed) {
+                let mut pipes = [0; 2];
+                match unsafe { libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) }
+                {
                     -1 => {
                         let err = io::Error::last_os_error();
                         if err.raw_os_error() == Some(libc::ENOSYS) {
-                            PIPE2_AVAILABLE.store(false, Ordering::SeqCst);
+                            PIPE2_AVAILABLE.store(false, Ordering::Relaxed);
                         } else {
                             return Err(err);
                         }
                     }
-                    _ => return Ok(Client::from_fds(pipes[0], pipes[1])),
+                    _ => unsafe {
+                        return Ok(Client::from_fds(
+                            OwnedFd::from_raw_fd(pipes[0]),
+                            OwnedFd::from_raw_fd(pipes[1]),
+                        ));
+                    },
                 }
             }
         }
 
-        cvt(libc::pipe(pipes.as_mut_ptr()))?;
-        drop(set_cloexec(pipes[0], true));
-        drop(set_cloexec(pipes[1], true));
-        Ok(Client::from_fds(pipes[0], pipes[1]))
+        let (read, write) = unsafe {
+            let mut pipes = [0; 2];
+            cvt(libc::pipe(pipes.as_mut_ptr()))?;
+            (
+                OwnedFd::from_raw_fd(pipes[0]),
+                OwnedFd::from_raw_fd(pipes[1]),
+            )
+        };
+        set_cloexec(read.as_fd(), true)?;
+        set_cloexec(write.as_fd(), true)?;
+        Ok(Client::from_fds(read, write))
     }
 
     pub(crate) unsafe fn open(s: &str, check_pipe: bool) -> Result<Client, FromEnvErrorInner> {
@@ -211,18 +223,21 @@ impl Client {
         }
 
         Ok(Some(Client {
-            read: clone_fd_and_set_cloexec(read)?,
-            write: clone_fd_and_set_cloexec(write)?,
+            read: clone_fd_and_set_cloexec(BorrowedFd::borrow_raw(read))?,
+            write: clone_fd_and_set_cloexec(BorrowedFd::borrow_raw(write))?,
             creation_arg,
             is_non_blocking: None,
         }))
     }
 
-    unsafe fn from_fds(read: c_int, write: c_int) -> Client {
+    fn from_fds(read: OwnedFd, write: OwnedFd) -> Client {
         Client {
-            read: File::from_raw_fd(read),
-            write: File::from_raw_fd(write),
-            creation_arg: ClientCreationArg::Fds { read, write },
+            creation_arg: ClientCreationArg::Fds {
+                read: read.as_raw_fd(),
+                write: write.as_raw_fd(),
+            },
+            read: read.into(),
+            write: write.into(),
             is_non_blocking: None,
         }
     }
@@ -304,7 +319,7 @@ impl Client {
 
         if let Some(is_non_blocking) = self.is_non_blocking.as_ref() {
             if !is_non_blocking.load(Ordering::Relaxed) {
-                set_nonblocking(fifo.as_raw_fd(), true)?;
+                set_nonblocking(fifo.as_fd(), true)?;
                 is_non_blocking.store(true, Ordering::Relaxed);
             }
         } else {
@@ -357,24 +372,30 @@ impl Client {
         Ok(unsafe { len.assume_init() } as usize)
     }
 
-    pub fn configure(&self, cmd: &mut Command) {
-        if matches!(self.creation_arg, ClientCreationArg::Fifo { .. }) {
-            // We `File::open`ed it when inheriting from environment,
-            // so no need to set cloexec for fifo.
-            return;
-        }
-        // Here we basically just want to say that in the child process
-        // we'll configure the read/write file descriptors to *not* be
-        // cloexec, so they're inherited across the exec and specified as
-        // integers through `string_arg` above.
-        let read = self.read.as_raw_fd();
-        let write = self.write.as_raw_fd();
-        unsafe {
-            cmd.pre_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
-                Ok(())
-            });
+    pub fn configure(self: &Arc<Self>, cmd: &mut Command) {
+        match self.creation_arg {
+            ClientCreationArg::Fifo { .. } => {
+                // We `File::open`ed it when inheriting from environment,
+                // so no need to set cloexec for fifo.
+            }
+            ClientCreationArg::Fds { read, write } => {
+                // Here we basically just want to say that in the child process
+                // we'll configure the read/write file descriptors to *not* be
+                // cloexec, so they're inherited across the exec and specified as
+                // integers through `string_arg` above.
+                unsafe {
+                    // Keep a reference to the jobserver alive in the closure so that
+                    // the pipe FDs aren't closed, otherwise `set_cloexec` might end up
+                    // targetting a completely unrelated file descriptor.
+                    let arc = self.clone();
+                    cmd.pre_exec(move || {
+                        let _ = &arc;
+                        set_cloexec(BorrowedFd::borrow_raw(read), false)?;
+                        set_cloexec(BorrowedFd::borrow_raw(write), false)?;
+                        Ok(())
+                    });
+                }
+            }
         }
     }
 }
@@ -515,34 +536,32 @@ unsafe fn fd_check(fd: c_int, check_pipe: bool) -> Result<(), FromEnvErrorInner>
     }
 }
 
-fn clone_fd_and_set_cloexec(fd: c_int) -> Result<File, FromEnvErrorInner> {
-    // Safety: fd is a valid fd dand it remains open until returns
-    unsafe { BorrowedFd::borrow_raw(fd) }
-        .try_clone_to_owned()
+fn clone_fd_and_set_cloexec(fd: BorrowedFd<'_>) -> Result<File, FromEnvErrorInner> {
+    fd.try_clone_to_owned()
         .map(File::from)
-        .map_err(|err| FromEnvErrorInner::CannotOpenFd(fd, err))
+        .map_err(|err| FromEnvErrorInner::CannotOpenFd(fd.as_raw_fd(), err))
 }
 
-fn set_cloexec(fd: c_int, set: bool) -> io::Result<()> {
+fn set_cloexec(fd: BorrowedFd<'_>, set: bool) -> io::Result<()> {
     unsafe {
-        let previous = cvt(libc::fcntl(fd, libc::F_GETFD))?;
+        let previous = cvt(libc::fcntl(fd.as_raw_fd(), libc::F_GETFD))?;
         let new = if set {
             previous | libc::FD_CLOEXEC
         } else {
             previous & !libc::FD_CLOEXEC
         };
         if new != previous {
-            cvt(libc::fcntl(fd, libc::F_SETFD, new))?;
+            cvt(libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, new))?;
         }
         Ok(())
     }
 }
 
-fn set_nonblocking(fd: c_int, set: bool) -> io::Result<()> {
+fn set_nonblocking(fd: BorrowedFd<'_>, set: bool) -> io::Result<()> {
     let status_flag = if set { libc::O_NONBLOCK } else { 0 };
 
     unsafe {
-        cvt(libc::fcntl(fd, libc::F_SETFL, status_flag))?;
+        cvt(libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, status_flag))?;
     }
 
     Ok(())
@@ -570,12 +589,7 @@ mod test {
 
     use crate::{test::run_named_fifo_try_acquire_tests, Client};
 
-    use std::{
-        fs::File,
-        io::{self, Write},
-        os::unix::io::AsRawFd,
-        sync::Arc,
-    };
+    use std::{fs::File, io::Write, os::unix::io::AsRawFd, sync::Arc};
 
     fn from_imp_client(imp: ClientImp) -> Client {
         Client {
@@ -629,7 +643,7 @@ mod test {
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
             new_client_from_pipe().0.try_acquire().unwrap_err().kind(),
-            io::ErrorKind::Unsupported
+            std::io::ErrorKind::Unsupported
         );
 
         #[cfg(target_os = "linux")]

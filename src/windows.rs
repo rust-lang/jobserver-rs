@@ -36,6 +36,7 @@ const WAIT_FAILED: DWORD = 4294967295u32;
 const WAIT_OBJECT_0: DWORD = 0u32;
 const WAIT_TIMEOUT: DWORD = 258u32;
 
+#[link(name = "kernel32")]
 extern "system" {
     fn CloseHandle(handle: HANDLE) -> BOOL;
     fn SetEvent(hEvent: HANDLE) -> BOOL;
@@ -64,6 +65,10 @@ extern "system" {
     ) -> HANDLE;
     fn OpenSemaphoreA(dwDesiredAccess: DWORD, bInheritHandle: BOOL, lpName: *const i8) -> HANDLE;
     fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+}
+
+#[link(name = "advapi32")]
+extern "system" {
     #[link_name = "SystemFunction036"]
     fn RtlGenRandom(RandomBuffer: *mut u8, RandomBufferLength: u32) -> u8;
 }

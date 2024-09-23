@@ -75,7 +75,7 @@ impl Client {
         Ok(*lock)
     }
 
-    pub fn configure(&self, _cmd: &mut Command) {
+    pub fn configure(self: &Arc<Self>, _cmd: &mut Command) {
         unreachable!();
     }
 }

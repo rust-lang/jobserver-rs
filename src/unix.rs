@@ -516,7 +516,7 @@ unsafe fn fd_check(fd: c_int, check_pipe: bool) -> Result<(), FromEnvErrorInner>
 }
 
 fn clone_fd_and_set_cloexec(fd: c_int) -> Result<File, FromEnvErrorInner> {
-    // Safety: fd is a valid fd dand it remains open until returns
+    // Safety: fd is a valid fd and it remains open until returns
     unsafe { BorrowedFd::borrow_raw(fd) }
         .try_clone_to_owned()
         .map(File::from)

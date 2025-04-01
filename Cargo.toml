@@ -13,7 +13,7 @@ edition = "2021"
 rust-version = "1.63"
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.87"
+libc = "0.2.171"
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.28.0", features = ["fs"] }

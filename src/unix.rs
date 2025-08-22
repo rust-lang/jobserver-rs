@@ -552,12 +552,7 @@ mod test {
 
     use crate::{test::run_named_fifo_try_acquire_tests, Client};
 
-    use std::{
-        fs::File,
-        io::{self, Write},
-        os::unix::io::AsRawFd,
-        sync::Arc,
-    };
+    use std::{fs::File, io::Write, os::unix::io::AsRawFd, sync::Arc};
 
     fn from_imp_client(imp: ClientImp) -> Client {
         Client {
@@ -611,7 +606,7 @@ mod test {
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
             new_client_from_pipe().0.try_acquire().unwrap_err().kind(),
-            io::ErrorKind::Unsupported
+            std::io::ErrorKind::Unsupported
         );
 
         #[cfg(target_os = "linux")]

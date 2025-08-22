@@ -72,30 +72,19 @@ impl Client {
     unsafe fn mk() -> io::Result<Client> {
         let mut pipes = [0; 2];
 
-        // Attempt atomically-create-with-cloexec if we can on Linux,
-        // detected by using the `syscall` function in `libc` to try to work
-        // with as many kernels/glibc implementations as possible.
+        // Atomically-create-with-cloexec on Linux.
         #[cfg(target_os = "linux")]
-        {
-            static PIPE2_AVAILABLE: AtomicBool = AtomicBool::new(true);
-            if PIPE2_AVAILABLE.load(Ordering::SeqCst) {
-                match libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) {
-                    -1 => {
-                        let err = io::Error::last_os_error();
-                        if err.raw_os_error() == Some(libc::ENOSYS) {
-                            PIPE2_AVAILABLE.store(false, Ordering::SeqCst);
-                        } else {
-                            return Err(err);
-                        }
-                    }
-                    _ => return Ok(Client::from_fds(pipes[0], pipes[1])),
-                }
-            }
+        if libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) == -1 {
+            return Err(io::Error::last_os_error());
         }
 
-        cvt(libc::pipe(pipes.as_mut_ptr()))?;
-        drop(set_cloexec(pipes[0], true));
-        drop(set_cloexec(pipes[1], true));
+        #[cfg(not(target_os = "linux"))]
+        {
+            cvt(libc::pipe(pipes.as_mut_ptr()))?;
+            drop(set_cloexec(pipes[0], true));
+            drop(set_cloexec(pipes[1], true));
+        }
+
         Ok(Client::from_fds(pipes[0], pipes[1]))
     }
 

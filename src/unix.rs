@@ -8,10 +8,9 @@ use std::mem::MaybeUninit;
 use std::os::unix::prelude::*;
 use std::path::Path;
 use std::process::Command;
-use std::ptr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Once,
+    Arc,
 };
 use std::thread::{self, Builder, JoinHandle};
 use std::time::Duration;
@@ -379,19 +378,24 @@ pub(crate) fn spawn_helper(
     state: Arc<super::HelperState>,
     mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
 ) -> io::Result<Helper> {
-    static USR1_INIT: Once = Once::new();
-    let mut err = None;
-    USR1_INIT.call_once(|| unsafe {
-        let mut new: libc::sigaction = mem::zeroed();
-        new.sa_sigaction = sigusr1_handler as usize;
-        new.sa_flags = libc::SA_SIGINFO as _;
-        if libc::sigaction(libc::SIGUSR1, &new, ptr::null_mut()) != 0 {
-            err = Some(io::Error::last_os_error());
-        }
-    });
+    #[cfg(not(miri))]
+    {
+        use std::sync::Once;
 
-    if let Some(e) = err.take() {
-        return Err(e);
+        static USR1_INIT: Once = Once::new();
+        let mut err = None;
+        USR1_INIT.call_once(|| unsafe {
+            let mut new: libc::sigaction = mem::zeroed();
+            new.sa_sigaction = sigusr1_handler as usize;
+            new.sa_flags = libc::SA_SIGINFO as _;
+            if libc::sigaction(libc::SIGUSR1, &new, std::ptr::null_mut()) != 0 {
+                err = Some(io::Error::last_os_error());
+            }
+        });
+
+        if let Some(e) = err.take() {
+            return Err(e);
+        }
     }
 
     let state2 = state.clone();
@@ -436,6 +440,7 @@ impl Helper {
             if state.consumer_done {
                 break;
             }
+            #[cfg(not(miri))]
             unsafe {
                 // Ignore the return value here of `pthread_kill`,
                 // apparently on OSX if you kill a dead thread it will
@@ -538,6 +543,7 @@ fn cvt(t: c_int) -> io::Result<c_int> {
     }
 }
 
+#[cfg(not(miri))]
 extern "C" fn sigusr1_handler(
     _signum: c_int,
     _info: *mut libc::siginfo_t,

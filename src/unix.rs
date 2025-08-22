@@ -74,7 +74,7 @@ impl Client {
 
         // Atomically-create-with-cloexec on Linux.
         #[cfg(target_os = "linux")]
-        if libc::syscall(libc::SYS_pipe2, pipes.as_mut_ptr(), libc::O_CLOEXEC) == -1 {
+        if libc::pipe2(pipes.as_mut_ptr(), libc::O_CLOEXEC) == -1 {
             return Err(io::Error::last_os_error());
         }
 

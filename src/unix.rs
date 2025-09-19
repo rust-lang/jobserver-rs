@@ -291,9 +291,12 @@ impl Client {
         let mut fifo = &self.read;
 
         if let Some(is_non_blocking) = self.is_non_blocking.as_ref() {
-            if !is_non_blocking.load(Ordering::Relaxed) {
+            // Use compare_exchange to atomically check and set the flag
+            if is_non_blocking
+                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
                 set_nonblocking(fifo.as_raw_fd(), true)?;
-                is_non_blocking.store(true, Ordering::Relaxed);
             }
         } else {
             return Err(io::ErrorKind::Unsupported.into());

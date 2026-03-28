@@ -16,7 +16,7 @@ rust-version = "1.63"
 libc = "0.2.171"
 
 [target.'cfg(unix)'.dev-dependencies]
-nix = { version = "0.28.0", features = ["fs"] }
+nix = { version = "0.31.0", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 getrandom = { version = "0.3.2", features = ["std"] }

@@ -10,7 +10,7 @@ description = """
 An implementation of the GNU Make jobserver for Rust.
 """
 edition = "2021"
-rust-version = "1.63"
+rust-version = "1.85"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.171"
@@ -19,7 +19,7 @@ libc = "0.2.171"
 nix = { version = "0.28.0", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
-getrandom = { version = "0.3.2", features = ["std"] }
+getrandom = { version = "0.4", features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3.10.1"

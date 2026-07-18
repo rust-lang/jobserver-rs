@@ -32,8 +32,12 @@ pub enum FromEnvErrorKind {
     /// is negative, which means it is disabled for this process
     /// ([GNU `make` manual: POSIX Jobserver Interaction](https://www.gnu.org/software/make/manual/make.html#POSIX-Jobserver)).
     NegativeFd,
-    /// File descriptor from the jobserver environment variable value is not a pipe.
+    /// Deprecated: File descriptor from is not a pipe, specifically.
+    #[deprecated(note = "Use `UnsupportedFdType` instead")]
     NotAPipe,
+    /// File descriptor from the jobserver environment variable value is not a
+    /// supported file type (pipe, socket or character device).
+    UnsupportedFdType,
     /// Jobserver inheritance is not supported on this platform.
     Unsupported,
 }
@@ -48,7 +52,7 @@ impl FromEnvError {
             FromEnvErrorInner::CannotOpenPath(..) => FromEnvErrorKind::CannotOpenPath,
             FromEnvErrorInner::CannotOpenFd(..) => FromEnvErrorKind::CannotOpenFd,
             FromEnvErrorInner::NegativeFd(..) => FromEnvErrorKind::NegativeFd,
-            FromEnvErrorInner::NotAPipe(..) => FromEnvErrorKind::NotAPipe,
+            FromEnvErrorInner::UnsupportedFdType(..) => FromEnvErrorKind::UnsupportedFdType,
             FromEnvErrorInner::Unsupported => FromEnvErrorKind::Unsupported,
         }
     }
@@ -63,8 +67,8 @@ impl std::fmt::Display for FromEnvError {
             FromEnvErrorInner::CannotOpenPath(s, err) => write!(f, "cannot open path or name {s} from the jobserver environment variable value: {err}"),
             FromEnvErrorInner::CannotOpenFd(fd, err) => write!(f, "cannot open file descriptor {fd} from the jobserver environment variable value: {err}"),
             FromEnvErrorInner::NegativeFd(fd) => write!(f, "file descriptor {fd} from the jobserver environment variable value is negative"),
-            FromEnvErrorInner::NotAPipe(fd, None) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a pipe"),
-            FromEnvErrorInner::NotAPipe(fd, Some(err)) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a pipe: {err}"),
+            FromEnvErrorInner::UnsupportedFdType(fd, None) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a supported file type (pipe, socket or character device)"),
+            FromEnvErrorInner::UnsupportedFdType(fd, Some(err)) => write!(f, "file descriptor {fd} from the jobserver environment variable value is not a supported file type (pipe, socket or character device): {err}"),
             FromEnvErrorInner::Unsupported => write!(f, "jobserver inheritance is not supported on this platform"),
         }
     }
@@ -73,9 +77,8 @@ impl std::error::Error for FromEnvError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.inner {
             FromEnvErrorInner::CannotOpenPath(_, err) => Some(err),
-            FromEnvErrorInner::NotAPipe(_, Some(err)) | FromEnvErrorInner::CannotOpenFd(_, err) => {
-                Some(err)
-            }
+            FromEnvErrorInner::UnsupportedFdType(_, Some(err))
+            | FromEnvErrorInner::CannotOpenFd(_, err) => Some(err),
             _ => None,
         }
     }
@@ -90,6 +93,6 @@ pub(crate) enum FromEnvErrorInner {
     CannotOpenPath(String, std::io::Error),
     CannotOpenFd(RawFd, std::io::Error),
     NegativeFd(RawFd),
-    NotAPipe(RawFd, Option<std::io::Error>),
+    UnsupportedFdType(RawFd, Option<std::io::Error>),
     Unsupported,
 }

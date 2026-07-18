@@ -6,10 +6,15 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: publish
+    permissions:
+      id-token: write     # Required for OIDC token exchange
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
       - name: Publish to crates.io
         run: |
           cargo publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

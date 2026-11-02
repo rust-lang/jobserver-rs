@@ -378,6 +378,8 @@ impl Client {
     /// On Unix and Windows this will clobber the `CARGO_MAKEFLAGS` environment
     /// variables for the child process, and on Unix this will also allow the
     /// two file descriptors for this client to be inherited to the child.
+    /// For descriptor-based jobservers, the configured command keeps those Unix
+    /// descriptors alive even if the original client is dropped before spawning.
     ///
     /// On platforms other than Unix and Windows this panics.
     pub fn configure(&self, cmd: &mut Command) {
@@ -401,6 +403,8 @@ impl Client {
     /// `MAKEFLAGS` and `MFLAGS` environment variables for the child process,
     /// and on Unix this will also allow the two file descriptors for
     /// this client to be inherited to the child.
+    /// For descriptor-based jobservers, the configured command keeps those Unix
+    /// descriptors alive even if the original client is dropped before spawning.
     ///
     /// On platforms other than Unix and Windows this panics.
     pub fn configure_make(&self, cmd: &mut Command) {

@@ -659,6 +659,29 @@ mod test {
         std::mem::drop(x.into_helper_thread(|_| {}).unwrap());
     }
 
+    #[cfg(not(any(unix, windows)))]
+    #[test]
+    fn helper_shutdown_interrupts_pending_acquire() {
+        let (finished, result) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let client = crate::Client::new(0).unwrap();
+            let helper = client.clone().into_helper_thread(|_| {}).unwrap();
+            helper.request_token();
+            // Wait until the request has entered acquisition, where no token
+            // can arrive. Shutdown must cancel it without inventing a token.
+            while helper.state.lock().requests != 0 {
+                std::thread::yield_now();
+            }
+            drop(helper);
+            assert_eq!(client.available().unwrap(), 0);
+            finished.send(()).unwrap();
+        });
+        result
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("helper shutdown blocked waiting for a token");
+        worker.join().unwrap();
+    }
+
     #[test]
     fn test_find_jobserver_auth() {
         let cases = [

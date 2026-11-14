@@ -55,6 +55,22 @@ impl Client {
         }
     }
 
+    fn acquire_for_helper(&self, state: &super::HelperState) -> Option<Acquired> {
+        let mut lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
+        while *lock == 0 {
+            if state.lock().producer_done {
+                return None;
+            }
+            lock = self
+                .inner
+                .cvar
+                .wait(lock)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+        *lock -= 1;
+        Some(Acquired(()))
+    }
+
     pub fn release(&self, _data: Option<&Acquired>) -> io::Result<()> {
         let mut lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
         *lock += 1;
@@ -83,6 +99,7 @@ impl Client {
 #[derive(Debug)]
 pub struct Helper {
     thread: JoinHandle<()>,
+    inner: Arc<Inner>,
 }
 
 pub(crate) fn spawn_helper(
@@ -90,17 +107,30 @@ pub(crate) fn spawn_helper(
     state: Arc<super::HelperState>,
     mut f: Box<dyn FnMut(io::Result<crate::Acquired>) + Send>,
 ) -> io::Result<Helper> {
+    let inner = Arc::clone(&client.inner.inner);
     let thread = Builder::new().spawn(move || {
-        state.for_each_request(|_| f(client.acquire()));
+        state.for_each_request(|state| {
+            if let Some(data) = client.inner.acquire_for_helper(state) {
+                f(Ok(crate::Acquired {
+                    client: Arc::clone(&client.inner),
+                    data,
+                    disabled: false,
+                }));
+            }
+        });
     })?;
 
-    Ok(Helper { thread })
+    Ok(Helper { thread, inner })
 }
 
 impl Helper {
     pub fn join(self) {
-        // TODO: this is not correct if the thread is blocked in
-        // `client.acquire()`.
+        // Drop already set producer_done. Synchronize with the token wait
+        // before waking it so shutdown cannot race a new wait.
+        {
+            let _lock = self.inner.count.lock().unwrap_or_else(|e| e.into_inner());
+            self.inner.cvar.notify_all();
+        }
         drop(self.thread.join());
     }
 }

@@ -46,3 +46,8 @@ harness = false
 [[test]]
 name = "helper"
 path = "tests/helper.rs"
+
+[[test]]
+name = "configure-lifetime"
+path = "tests/configure-lifetime.rs"
+harness = false

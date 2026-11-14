@@ -345,7 +345,7 @@ impl Client {
         Ok(unsafe { len.assume_init() } as usize)
     }
 
-    pub fn configure(&self, cmd: &mut Command) {
+    pub fn configure(self: &Arc<Self>, cmd: &mut Command) {
         if matches!(self.creation_arg, ClientCreationArg::Fifo { .. }) {
             // We `File::open`ed it when inheriting from environment,
             // so no need to set cloexec for fifo.
@@ -355,12 +355,14 @@ impl Client {
         // we'll configure the read/write file descriptors to *not* be
         // cloexec, so they're inherited across the exec and specified as
         // integers through `string_arg` above.
-        let read = self.read.as_raw_fd();
-        let write = self.write.as_raw_fd();
+        // A Command may be spawned after its original Client is dropped, and may be
+        // spawned more than once. Retain the descriptor owners for the Command's lifetime;
+        // raw numbers alone could be reused for unrelated files before pre_exec runs.
+        let client = self.clone();
         unsafe {
             cmd.pre_exec(move || {
-                set_cloexec(read, false)?;
-                set_cloexec(write, false)?;
+                set_cloexec(client.read.as_raw_fd(), false)?;
+                set_cloexec(client.write.as_raw_fd(), false)?;
                 Ok(())
             });
         }
